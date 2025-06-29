@@ -1,143 +1,106 @@
 #!/bin/bash
 
-# Colores estilo dark para terminal
-RESET="\e[0m"
-BOLD="\e[1m"
+# Colores
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+CYAN='\033[1;36m'
+YELLOW='\033[1;33m'
+RESET='\033[0m'
 
-FG_WHITE="\e[97m"
-FG_CYAN="\e[96m"
-FG_GREEN="\e[92m"
-FG_YELLOW="\e[93m"
-FG_RED="\e[91m"
-FG_BLUE="\e[94m"
+# ══════ INFO DEL SISTEMA ══════
+USER_NAME="@$(whoami)"
+SO=$(lsb_release -d | cut -f2-)
+DATE=$(date +"%d-%m-%Y")
+TIME=$(date +"%T")
+IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
 
-BG_BLACK="\e[40m"
+# Disco
+DISK_TOTAL=$(df -h / | awk 'NR==2 {print $2}')
+DISK_USED=$(df -h / | awk 'NR==2 {print $3}')
+DISK_FREE=$(df -h / | awk 'NR==2 {print $4}')
 
-# Función para imprimir línea para bordes (longitud 54)
-linea() {
-  printf "═%.0s" $(seq 1 54)
-}
+# RAM
+read total used free shared buff cache <<< $(free -m | awk '/Mem:/ {print $2, $3, $4, $5, $6, $7}')
+RAM_TOTAL="${total}MB"
+RAM_USED="${used}MB"
+RAM_FREE="${free}MB"
+RAM_BUFFER="${buff}MB"
+RAM_CACHE="${cache}MB"
 
-# Padding espacios para alinear texto dentro del ancho
-espacios() {
-  local len=${#1}
-  local total=54
-  local spaces=$((total - len))
-  printf "%-${spaces}s" " "
-}
+# CPU
+CPU_CORES=$(nproc)
+CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')%
 
-# Obtener usuario actual
-usuario="@$(whoami)"
-
-# Obtener fecha y hora actuales
-fecha=$(date +"%d-%m-%Y")
-hora=$(date +"%H:%M:%S")
-
-# Obtener IP pública (usa dig, si no tienes internet puede quedar vacía)
-ip=$(dig +short myip.opendns.com @resolver1.opendns.com 2>/dev/null)
-# fallback IP local si no hay pública
-if [[ -z "$ip" ]]; then
-  ip=$(hostname -I | awk '{print $1}')
-fi
-
-# Obtener nombre y versión de SO
-so=$(lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2- | tr -d '"')
-
-# Info disco - asumimos "/" para disco principal
-disco_total=$(df -h / | awk 'NR==2 {print $2}')
-disco_usado=$(df -h / | awk 'NR==2 {print $3}')
-disco_libre=$(df -h / | awk 'NR==2 {print $4}')
-
-# Info CPU
-cpu_cores=$(nproc)
-# Uso cpu total en %: sumamos idle y restamos de 100, método simplificado
-cpu_usage() {
-  # leer dos valores de /proc/stat en un intervalo para calcular uso real
-  local cpu_line1 cpu_line2 cpu_idle1 cpu_idle2 cpu_total1 cpu_total2 cpu_usage
-  cpu_line1=($(head -n1 /proc/stat))
-  cpu_idle1=${cpu_line1[4]}
-  cpu_total1=0
-  for val in "${cpu_line1[@]:1}"; do
-    cpu_total1=$((cpu_total1 + val))
+# ══════ FUNCIÓN: PUERTOS ACTIVOS CON SERVICIOS ══════
+obtener_puertos_activos() {
+  ss -tulnp 2>/dev/null | awk 'NR>1 {split($5,p,":"); print p[length(p)]" "$NF}' | sort -u | while read -r linea; do
+    PUERTO=$(echo "$linea" | awk '{print $1}')
+    SERVICIO=$(ss -tulnp | grep ":$PUERTO " | sed -n 's/.*name="[^"]*".*/\1/p' | head -n1)
+    [ -z "$SERVICIO" ] && SERVICIO="desconocido"
+    printf "%-15s : %s\n" "$SERVICIO" "$PUERTO"
   done
-
-  sleep 0.4
-
-  cpu_line2=($(head -n1 /proc/stat))
-  cpu_idle2=${cpu_line2[4]}
-  cpu_total2=0
-  for val in "${cpu_line2[@]:1}"; do
-    cpu_total2=$((cpu_total2 + val))
-  done
-
-  local total_diff=$((cpu_total2 - cpu_total1))
-  local idle_diff=$((cpu_idle2 - cpu_idle1))
-  local busy_diff=$((total_diff - idle_diff))
-
-  cpu_usage=$(awk "BEGIN {printf \"%.1f\", (${busy_diff} * 100) / ${total_diff}}")
-  echo "$cpu_usage"
-}
-cpu_porcentaje=$(cpu_usage)
-
-# Info RAM en MiB
-mem_info() {
-  # tomamos valores de /proc/meminfo
-  local total used free buffers cached
-  total=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
-  free=$(awk '/MemFree/ {print $2}' /proc/meminfo)
-  buffers=$(awk '/Buffers/ {print $2}' /proc/meminfo)
-  cached=$(awk '/^Cached/ {print $2}' /proc/meminfo)
-  used=$((total - free - buffers - cached))
-
-  # convertimos a MiB
-  echo $((total / 1024)) $((used / 1024)) $((free / 1024)) $((buffers / 1024)) $((cached / 1024))
-}
-read -r mem_total mem_usado mem_libre mem_buffers mem_cached < <(mem_info)
-
-print_header_usuario() {
-  echo -e "${BG_BLACK}${FG_CYAN}╔$(linea)╗${RESET}"
-  echo -e "${BG_BLACK}${FG_CYAN}║${RESET}  ${BOLD}${FG_WHITE}${usuario}$(espacios "$usuario")${RESET}${BG_BLACK}${FG_CYAN}║${RESET}"
-  echo -e "${BG_BLACK}${FG_CYAN}╚$(linea)╝${RESET}"
 }
 
-print_menu() {
+# ══════ MOSTRAR PANEL ══════
+mostrar_panel() {
   clear
-  print_header_usuario
+  echo -e "${CYAN}══════════════════════════════════════════════════════════════════${RESET}"
+  echo -e "                            ${YELLOW}$USER_NAME${RESET}"
+  echo -e "${CYAN}╔════════════════════════════════════════════════════════════════╗${RESET}"
+  echo -e "  S.O:    $SO         Fecha:  $DATE"
+  echo -e "  IP:     $IP             Hora:   $TIME"
+  echo -e "${CYAN}╠═════════════════ DISCO ═════════════════╦═══════ CPU ═══════╣${RESET}"
+  echo -e "  Total:  $DISK_TOTAL  Usado: $DISK_USED   Núcleos: $CPU_CORES"
+  echo -e "  Libre:  $DISK_FREE                     Uso:     $CPU_USAGE"
+  echo -e "${CYAN}╠═════════════════════════ MEMORIA RAM ═══════════════════════╣${RESET}"
+  echo -e "  Total:  $RAM_TOTAL   Usada: $RAM_USED   Libre: $RAM_FREE"
+  echo -e "  Buffer: $RAM_BUFFER  Cache: $RAM_CACHE"
+  echo -e "${CYAN}╠════════════════════════ PUERTOS ACTIVOS ═════════════════════╣${RESET}"
+  
+  mapfile -t PUERTOS < <(obtener_puertos_activos)
+  for ((i = 0; i < ${#PUERTOS[@]}; i+=2)); do
+    LEFT="${PUERTOS[i]}"
+    RIGHT="${PUERTOS[i+1]}"
+    printf "  %-35s %-35s\n" "$LEFT" "$RIGHT"
+  done
 
-  echo -e "${BG_BLACK}${FG_CYAN}╔════════════════════════════════════════════════════════╗${RESET}"
-  echo -e "${BG_BLACK}${FG_WHITE}║  S.O: ${so}$(espacios "S.O: ${so}")Fecha: ${fecha}        ║${RESET}"
-  echo -e "${BG_BLACK}${FG_WHITE}║  IP:  ${ip}$(espacios "IP:  ${ip}")Hora: ${hora}           ║${RESET}"
-  echo -e "${BG_BLACK}${FG_CYAN}╠══════════════╦══════════════╦══════════════╣${RESET}"
-  echo -e "${BG_BLACK}${FG_WHITE}║     Disco    ║      CPU     ║      RAM     ║${RESET}"
-  echo -e "${BG_BLACK}${FG_CYAN}╠══════════════╬══════════════╬══════════════╣${RESET}"
-  echo -e "${BG_BLACK}${FG_WHITE}║ Total: ${disco_total}  ║ Cores: ${cpu_cores}   ║ Total: ${mem_total}Mi ║${RESET}"
-  echo -e "${BG_BLACK}${FG_WHITE}║ Usado: ${disco_usado}  ║ Uso:  ${cpu_porcentaje}% ║ Usado: ${mem_usado}Mi ║${RESET}"
-  echo -e "${BG_BLACK}${FG_WHITE}║ Libre: ${disco_libre}  ║              ║ Libre: ${mem_libre}Mi ║${RESET}"
-  echo -e "${BG_BLACK}${FG_WHITE}║              ║ Buffer: ${mem_buffers}Mi ║             ║${RESET}"
-  echo -e "${BG_BLACK}${FG_WHITE}║              ║ Cache:  ${mem_cached}Mi ║             ║${RESET}"
-  echo -e "${BG_BLACK}${FG_CYAN}╚════════════════════════════════════════════════════════╝${RESET}"
-
-  echo
-  # Estado cuentas (fijo)
-  echo -e "${FG_GREEN}  ACTIVA:  ${FG_YELLOW}45  ${FG_GREEN}EXPIRADA:  ${FG_RED}0  ${FG_GREEN}BLOQUEADA:  ${FG_RED}0  ${FG_GREEN}TOTAL: ${FG_YELLOW}10${RESET}"
-  echo -e "${FG_BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-
-  # Opciones menú
-  echo -e "${FG_CYAN}[1]${RESET}  🔐  ADMINISTRAR CUENTAS (SSH/DROPBEAR)"
-  echo -e "${FG_CYAN}[2]${RESET}  🚀  ADMINISTRAR CUENTAS (V2RAY/XRAY)"
-  echo -e "${FG_CYAN}[3]${RESET}  ⚙️  CONFIGURACIÓN DE PROTOCOLOS"
-  echo -e "${FG_CYAN}[4]${RESET}  🛠️  HERRAMIENTAS EXTRAS"
-  echo -e "${FG_CYAN}[5]${RESET}  📝  CONFIGURACIÓN DEL SCRIPT"
-  echo -e "${FG_CYAN}[6]${RESET}  🌐  IDIOMA / LANGUAGE"
-  echo -e "${FG_CYAN}[7]${FG_RED}[!] DESINSTALAR PANEL${RESET}"
-  echo -e "${FG_CYAN}[0]${RESET}  🚪  SALIR DEL VPS"
-  echo -e "${FG_CYAN}[8]${RESET}  ✋  SALIR DEL SCRIPT"
-  echo -e "${FG_CYAN}[9]${RESET}  🔄  REINICIAR VPS"
-  echo -e "${FG_BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-
-  echo -ne "${FG_YELLOW}Ingrese una opción: ${RESET}"
+  echo -e "${CYAN}╠════════════════════════ ESTADO DE CUENTAS ════════════════════╣${RESET}"
+  echo -e "       ACTIVAS: 1   EXPIRADAS: 0   BLOQUEADAS: 0   TOTAL: 6"
+  echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${RESET}"
+  echo -e "${CYAN}══════════════════════════════════════════════════════════════════${RESET}"
+  echo -e "  [1] > GESTIÓN SSH / DROPBEAR"
+  echo -e "  [2] > GESTIÓN V2RAY / XRAY"
+  echo -e "────────────────────────────────────────────────────────────"
+  echo -e "  [3] > CONFIGURAR PROTOCOLOS"
+  echo -e "  [4] > UTILIDADES Y HERRAMIENTAS"
+  echo -e "────────────────────────────────────────────────────────────"
+  echo -e "  [5] > AJUSTES GENERALES / IDIOMA"
+  echo -e "  [6] > [!] DESINSTALAR PANEL"
+  echo -e "${CYAN}══════════════════════════════════════════════════════════════════${RESET}"
+  echo -e "  0) SALIR VPS   7) SALIR SCRIPT   8) REINICIAR VPS"
+  echo -e "${CYAN}══════════════════════════════════════════════════════════════════${RESET}"
+  echo -ne "  Seleccione una opción: "
+  read -r opcion
+  ejecutar_opcion "$opcion"
 }
 
-print_menu
-read -r opcion
-echo -e "\nHas elegido la opción: $opcion"
+# ══════ LÓGICA DEL MENÚ ══════
+ejecutar_opcion() {
+  case "$1" in
+    1) echo -e "${GREEN}Abrir gestión SSH...${RESET}"; sleep 1 ;;
+    2) echo -e "${GREEN}Abrir gestión V2Ray...${RESET}"; sleep 1 ;;
+    3) echo -e "${GREEN}Configurando protocolos...${RESET}"; sleep 1 ;;
+    4) echo -e "${GREEN}Herramientas adicionales...${RESET}"; sleep 1 ;;
+    5) echo -e "${GREEN}Configuración general...${RESET}"; sleep 1 ;;
+    6) echo -e "${RED}Desinstalando...${RESET}"; sleep 1 ;;
+    7) echo -e "${YELLOW}Saliendo del script...${RESET}"; exit 0 ;;
+    8) echo -e "${CYAN}Reiniciando VPS...${RESET}"; reboot ;;
+    0) echo -e "${CYAN}Cerrando sesión VPS...${RESET}"; exit ;;
+    *) echo -e "${RED}Opción no válida.${RESET}"; sleep 1 ;;
+  esac
+  read -p "Presiona Enter para volver al menú..." enter
+  mostrar_panel
+}
+
+# ══════ EJECUTAR PANEL ══════
+mostrar_panel
