@@ -33,12 +33,12 @@ CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')%
 
 # ══════ FUNCIÓN: PUERTOS ACTIVOS CON SERVICIOS ══════
 obtener_puertos_activos() {
-  ss -tulnp 2>/dev/null | awk 'NR>1 {split($5,p,":"); print p[length(p)]" "$NF}' | sort -u | while read -r linea; do
-    PUERTO=$(echo "$linea" | awk '{print $1}')
-    SERVICIO=$(ss -tulnp | grep ":$PUERTO " | sed -n 's/.*name="[^"]*".*/\1/p' | head -n1)
-    [ -z "$SERVICIO" ] && SERVICIO="desconocido"
-    printf "%-15s : %s\n" "$SERVICIO" "$PUERTO"
-  done
+  ss -tulnp 2>/dev/null | awk 'NR>1' | while read -r linea; do
+    puerto=$(echo "$linea" | awk '{split($5,p,":"); print p[length(p)]}')
+    servicio=$(echo "$linea" | grep -oP 'users:".*?"' | cut -d'"' -f2)
+    [ -z "$servicio" ] && servicio="desconocido"
+    printf "%-15s : %s\n" "$servicio" "$puerto"
+  done | sort -u
 }
 
 # ══════ MOSTRAR PANEL ══════
