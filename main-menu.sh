@@ -35,50 +35,50 @@ CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')%
 obtener_puertos_activos() {
   ss -tulnp 2>/dev/null | awk 'NR>1' | while read -r linea; do
     puerto=$(echo "$linea" | awk '{split($5,p,":"); print p[length(p)]}')
-    servicio=$(echo "$linea" | grep -oP 'users:".*?"' | cut -d'"' -f2)
+    servicio=$(echo "$linea" | grep -oP 'users:\(\(".*?"' | cut -d'"' -f2)
     [ -z "$servicio" ] && servicio="desconocido"
-    printf "%-15s : %s\n" "$servicio" "$puerto"
+    printf "%-25s : %s\n" "$servicio" "$puerto"
   done | sort -u
 }
 
 # ══════ MOSTRAR PANEL ══════
 mostrar_panel() {
   clear
-  echo -e "${CYAN}══════════════════════════════════════════════════════════════════${RESET}"
-  echo -e "                            ${YELLOW}$USER_NAME${RESET}"
-  echo -e "${CYAN}╔════════════════════════════════════════════════════════════════╗${RESET}"
-  echo -e "  S.O:    $SO         Fecha:  $DATE"
-  echo -e "  IP:     $IP             Hora:   $TIME"
-  echo -e "${CYAN}╠═════════════════ DISCO ═════════════════╦═══════ CPU ═══════╣${RESET}"
-  echo -e "  Total:  $DISK_TOTAL  Usado: $DISK_USED   Núcleos: $CPU_CORES"
-  echo -e "  Libre:  $DISK_FREE                     Uso:     $CPU_USAGE"
-  echo -e "${CYAN}╠═════════════════════════ MEMORIA RAM ═══════════════════════╣${RESET}"
-  echo -e "  Total:  $RAM_TOTAL   Usada: $RAM_USED   Libre: $RAM_FREE"
-  echo -e "  Buffer: $RAM_BUFFER  Cache: $RAM_CACHE"
-  echo -e "${CYAN}╠════════════════════════ PUERTOS ACTIVOS ═════════════════════╣${RESET}"
-  
+  echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${RESET}"
+  printf "                            ${YELLOW}%-60s${RESET}\n" "$USER_NAME"
+  echo -e "${CYAN}╔═════════════════════════════════════════════════════════════════════════════╗${RESET}"
+  printf "  %-40s Fecha:  %s\n" "S.O:     $SO" "$DATE"
+  printf "  %-40s Hora:   %s\n" "IP:      $IP" "$TIME"
+  echo -e "${CYAN}╠════════════════════════ DISCO ═════════════════════╦══════ CPU ══════╣${RESET}"
+  printf "  %-35s %-10s Núcleos: %-2s\n" "Total:   $DISK_TOTAL  Usado: $DISK_USED" "" "$CPU_CORES"
+  printf "  %-35s %-10s Uso:     %s\n" "Libre:   $DISK_FREE" "" "$CPU_USAGE"
+  echo -e "${CYAN}╠════════════════════════════ MEMORIA RAM ═════════════════════════════════════╣${RESET}"
+  printf "  %-20s %-20s %-20s\n" "Total:   $RAM_TOTAL" "Usada: $RAM_USED" "Libre: $RAM_FREE"
+  printf "  %-20s %-20s\n" "Buffer:  $RAM_BUFFER" "Cache: $RAM_CACHE"
+  echo -e "${CYAN}╠═════════════════════════ PUERTOS ACTIVOS ════════════════════════════════════╣${RESET}"
+
   mapfile -t PUERTOS < <(obtener_puertos_activos)
   for ((i = 0; i < ${#PUERTOS[@]}; i+=2)); do
     LEFT="${PUERTOS[i]}"
     RIGHT="${PUERTOS[i+1]}"
-    printf "  %-35s %-35s\n" "$LEFT" "$RIGHT"
+    printf "  %-39s %-39s\n" "$LEFT" "${RIGHT:-}"
   done
 
-  echo -e "${CYAN}╠════════════════════════ ESTADO DE CUENTAS ════════════════════╣${RESET}"
-  echo -e "       ACTIVAS: 1   EXPIRADAS: 0   BLOQUEADAS: 0   TOTAL: 6"
-  echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${RESET}"
-  echo -e "${CYAN}══════════════════════════════════════════════════════════════════${RESET}"
+  echo -e "${CYAN}╠═════════════════════════ ESTADO DE CUENTAS ══════════════════════════════════╣${RESET}"
+  echo -e "       ACTIVAS: 1     EXPIRADAS: 0     BLOQUEADAS: 0     TOTAL: 6"
+  echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════════════════╝${RESET}"
+  echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${RESET}"
   echo -e "  [1] > GESTIÓN SSH / DROPBEAR"
   echo -e "  [2] > GESTIÓN V2RAY / XRAY"
-  echo -e "────────────────────────────────────────────────────────────"
+  echo -e "───────────────────────────────────────────────────────────────────────────────"
   echo -e "  [3] > CONFIGURAR PROTOCOLOS"
   echo -e "  [4] > UTILIDADES Y HERRAMIENTAS"
-  echo -e "────────────────────────────────────────────────────────────"
+  echo -e "───────────────────────────────────────────────────────────────────────────────"
   echo -e "  [5] > AJUSTES GENERALES / IDIOMA"
   echo -e "  [6] > [!] DESINSTALAR PANEL"
-  echo -e "${CYAN}══════════════════════════════════════════════════════════════════${RESET}"
-  echo -e "  0) SALIR VPS   7) SALIR SCRIPT   8) REINICIAR VPS"
-  echo -e "${CYAN}══════════════════════════════════════════════════════════════════${RESET}"
+  echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${RESET}"
+  echo -e "  0) SALIR VPS     7) SALIR SCRIPT     8) REINICIAR VPS"
+  echo -e "${CYAN}═══════════════════════════════════════════════════════════════════════════════${RESET}"
   echo -ne "  Seleccione una opción: "
   read -r opcion
   ejecutar_opcion "$opcion"
