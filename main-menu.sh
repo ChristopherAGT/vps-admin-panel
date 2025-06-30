@@ -126,23 +126,34 @@ mostrar_panel() {
 # ══════ LÓGICA DEL MENÚ ══════
 ejecutar_opcion() {
   case "$1" in
-    1) echo -e "${GREEN}Abrir gestión SSH...${RESET}"; sleep 1 ;;
-    2) echo -e "${GREEN}Abrir gestión V2Ray...${RESET}"; sleep 1 ;;
-    3) echo -e "${GREEN}Configurando protocolos...${RESET}"; sleep 1 ;;
-    4) echo -e "${GREEN}Herramientas adicionales...${RESET}"; sleep 1 ;;
-    5) echo -e "${GREEN}Configuración general...${RESET}"; sleep 1 ;;
-    6) echo -e "${RED}Desinstalando...${RESET}"; sleep 1 ;;
-    7) echo -e "${YELLOW}Saliendo del script...${RESET}"; exit 0 ;;
-    8) echo -e "${CYAN}Reiniciando VPS...${RESET}"; reboot ;;
+    1) ;;  # Sin mensaje ni pausa
+    2) ;;
+    3) ;;
+    4) ;;
+    5) ;;
+    6) ;;
+    7) exit 0 ;;  # Salir sin mensaje
+    8)
+      echo -e "${CYAN}El VPS se reiniciará en 5 segundos...${RESET}"
+      for i in {5..1}; do
+        echo -ne "${CYAN}$i...${RESET}\r"
+        sleep 1
+      done
+      reboot
+      ;;
     0)
-  echo -e "${CYAN}Cerrando sesión VPS...${RESET}"
-  sleep 1
-  pkill -KILL -t $(tty | sed 's:/dev/::') || exit
-  ;;
-    *) echo -e "${RED}Opción no válida.${RESET}"; sleep 1 ;;
+      pkill -KILL -t "$(tty | sed 's:/dev/::')" || exit
+      ;;
+    *)
+      echo -e "${RED}Opción no válida.${RESET}"
+      sleep 1
+      ;;
   esac
-  read -p "Presiona Enter para volver al menú..." enter
-  mostrar_panel
+  # Solo mostrar el menú si no se reinicia o sale
+  if [[ "$1" != "7" && "$1" != "8" ]]; then
+    read -p "Presiona Enter para volver al menú..." enter
+    mostrar_panel
+  fi
 }
 
 # ══════ INICIO ══════
