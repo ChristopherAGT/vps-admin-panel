@@ -31,12 +31,12 @@ RAM_CACHE="${cache}MB"
 CPU_CORES=$(nproc)
 CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')%
 
-# ══════ FUNCIÓN: PUERTOS AGRUPADOS POR SERVICIO ══════
+# ══════ PUERTOS AGRUPADOS ══════
 obtener_puertos_agrupados() {
   declare -A grupos
   ss -tulnp 2>/dev/null | awk 'NR>1' | while read -r linea; do
     puerto=$(echo "$linea" | awk '{split($5,p,":"); print p[length(p)]}')
-    servicio=$(echo "$linea" | grep -oP 'users:\(\(\".*?"' | cut -d'"' -f2)
+    servicio=$(echo "$linea" | grep -oP 'users:\(\(".*?"' | cut -d'"' -f2)
     [ -z "$servicio" ] && servicio="desconocido"
     case "$servicio" in
       dropbear)        grupo="DROPBEAR" ;;
@@ -86,9 +86,7 @@ mostrar_panel() {
   printf "  %-20s %-20s %-20s\n" "Total:   $RAM_TOTAL" "Usada: $RAM_USED" "Libre: $RAM_FREE"
   printf "  %-20s %-20s\n" "Buffer:  $RAM_BUFFER" "Cache: $RAM_CACHE"
   echo -e "${CYAN}╠═════════════════════════ PUERTOS ACTIVOS ════════════════════════════════════╣${RESET}"
-
   obtener_puertos_agrupados
-
   echo -e "${CYAN}╠═════════════════════════ ESTADO DE CUENTAS ══════════════════════════════════╣${RESET}"
   echo -e "       ACTIVAS: 1     EXPIRADAS: 0     BLOQUEADAS: 0     TOTAL: 6"
   echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════════════════╝${RESET}"
