@@ -9,10 +9,10 @@ RESET='\033[0m'
 
 # Ancho de terminal y líneas dinámicas
 WIDTH=$(tput cols)
-LINE_TOP=$(printf "╔%0.s═" $(seq 1 $((WIDTH-2))) )
-LINE_MID=$(printf "╠%0.s═" $(seq 1 $((WIDTH-2))) )
-LINE_BOT=$(printf "╚%0.s═" $(seq 1 $((WIDTH-2))) )
-LINE_SEP=$(printf "─%.0s" $(seq 1 $((WIDTH-2))) )
+LINE_TOP="╔$(printf '═%.0s' $(seq 1 $((WIDTH-2))))╗"
+LINE_MID="╠$(printf '═%.0s' $(seq 1 $((WIDTH-2))))╣"
+LINE_BOT="╚$(printf '═%.0s' $(seq 1 $((WIDTH-2))))╝"
+LINE_SEP="$(printf '─%.0s' $(seq 1 $((WIDTH-2))))"
 
 # ══════ INFO DEL SISTEMA ══════
 USER_NAME="@$(whoami)"
@@ -51,7 +51,7 @@ obtener_puertos_agrupados() {
   declare -A grupos
   ss -tulnp 2>/dev/null | awk 'NR>1' | while read -r linea; do
     puerto=$(echo "$linea" | awk '{split($5,p,":"); print p[length(p)]}')
-    servicio=$(echo "$linea" | grep -oP 'users:\(\(".*?"' | cut -d'"' -f2)
+    servicio=$(echo "$linea" | grep -oP 'users:\(\(\".*?\"' | cut -d'\"' -f2)
     [ -z "$servicio" ] && servicio="desconocido"
     case "$servicio" in
       dropbear)        grupo="DROPBEAR" ;;
@@ -73,7 +73,6 @@ obtener_puertos_agrupados() {
     grupos["$grupo"]+="$puerto "
   done
 
-  # Mostrar en dos columnas
   keys=("${!grupos[@]}")
   total=${#keys[@]}
   for ((i=0; i<total; i+=2)); do
@@ -90,36 +89,20 @@ obtener_puertos_agrupados() {
 # ══════ MOSTRAR PANEL ══════
 mostrar_panel() {
   clear
-  # Encabezado
   echo -e "${CYAN}${LINE_TOP}${RESET}"
-  printf "%*s
-" $(( (WIDTH + ${#USER_NAME})/2 )) "${YELLOW}${USER_NAME}${RESET}"
+  printf "│%*s%*s│\n" $(( (WIDTH + ${#USER_NAME})/2 )) "${YELLOW}${USER_NAME}${RESET}" $(( (WIDTH - ${#USER_NAME})/2 )) ""
   echo -e "${CYAN}${LINE_MID}${RESET}"
-
-  # Info sistema
-  printf "  %-30s Fecha: %-10s   IP: %-15s Hora: %s
-" "S.O: $SO" "$DATE" "$IP" "$TIME"
+  printf "  %-30s Fecha: %-10s   IP: %-15s Hora: %s\n" "S.O: $SO" "$DATE" "$IP" "$TIME"
   echo -e "${CYAN}${LINE_MID}${RESET}"
-
-  # Disco y CPU
   printf "  DISCO -> Total: %-7s Usado: %-7s Libre: %-7s" "$DISK_TOTAL" "$DISK_USED" "$DISK_FREE"
-  printf "   CPU -> Núcleos: %-2s Uso: ${CPU_COLOR}%3s%%%s
-" "$CPU_CORES" "$CPU_USAGE_INT" "$RESET"
+  printf "   CPU -> Núcleos: %-2s Uso: ${CPU_COLOR}%3s%%%s\n" "$CPU_CORES" "$CPU_USAGE_INT" "$RESET"
   echo -e "${CYAN}${LINE_MID}${RESET}"
-
-  # RAM
-  printf "  RAM   -> Total: %-7s Usada: %-7s Libre: %-7s
-" "$RAM_TOTAL" "$RAM_USED" "$RAM_FREE"
-  printf "           Buffer: %-7s Cache: %-7s
-" "$RAM_BUFFER" "$RAM_CACHE"
+  printf "  RAM   -> Total: %-7s Usada: %-7s Libre: %-7s\n" "$RAM_TOTAL" "$RAM_USED" "$RAM_FREE"
+  printf "           Buffer: %-7s Cache: %-7s\n" "$RAM_BUFFER" "$RAM_CACHE"
   echo -e "${CYAN}${LINE_MID}${RESET}"
-
-  # Puertos agrupados
   echo "  PUERTOS ACTIVOS AGRUPADOS:"
   obtener_puertos_agrupados
   echo -e "${CYAN}${LINE_MID}${RESET}"
-
-  # Menú
   echo "  [1] > GESTIÓN SSH / DROPBEAR     [2] > GESTIÓN V2RAY / XRAY"
   echo -e "${CYAN}${LINE_SEP}${RESET}"
   echo "  [3] > CONFIGURAR PROTOCOLOS      [4] > UTILIDADES Y HERRAMIENTAS"
@@ -151,5 +134,5 @@ ejecutar_opcion() {
   mostrar_panel
 }
 
-# ══════ EJECUTAR PANEL ──────
+# ══════ EJECUTAR PANEL ══════
 mostrar_panel
