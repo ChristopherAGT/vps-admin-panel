@@ -127,6 +127,9 @@ crear_usuario() {
   # Guardar en base de datos
   echo "$nuevo_usuario:$nueva_pass:$fecha_mostrar:$dias_exp:$conexiones:ULK" >> "$DB"
 
+  echo "$nuevo_usuario:$nueva_pass:$fecha_mostrar:$dias_exp:$conexiones:ULK" >> "$DB"
+  limpiar_base_de_datos
+  
   # Mostrar resumen
   clear
   echo -e "${CYAN}════════════════════════════════════════════════════════════${RESET}"
