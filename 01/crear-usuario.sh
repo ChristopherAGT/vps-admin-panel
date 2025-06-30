@@ -7,7 +7,6 @@ RED='\033[1;31m'
 RESET='\033[0m'
 
 USUARIOS_FILE="/etc/usuarios_panel.txt"
-# Asegura que el archivo exista y tenga permisos restrictivos
 touch "$USUARIOS_FILE"
 chmod 600 "$USUARIOS_FILE"
 
@@ -26,15 +25,12 @@ mostrar_tabla_usuarios() {
 
   n=1
   while IFS=' ' read -r user pass exp; do
-    # Extraer fecha y dias restantes
-    if [[ -z "$user" ]]; then
-      continue
-    fi
+    [[ -z "$user" ]] && continue
 
     if id -u "$user" &>/dev/null; then
       exp_date=$(date -d "$exp" +"%b%d/%y" 2>/dev/null || echo "N/A")
       dias_left=$(( ( $(date -d "$exp" +%s) - $(date +%s) ) / 86400 ))
-      if (( dias_left < 0 )); then dias_left=0; fi
+      (( dias_left < 0 )) && dias_left=0
       lim="--"
       estado="ULK"
       printf "  %-2s) %-17s %-15s %-10s %-4s  %-3s  %-s\n" "$n" "$user" "$pass" "$exp_date" "$dias_left" "$lim" "$estado"
@@ -52,7 +48,7 @@ leer_numero_valido() {
   local prompt="$1"
   local valor
   while true; do
-    printf "%s" "$prompt"
+    echo -ne "$prompt "
     read -r valor
     if [[ "$valor" =~ ^[0-9]+$ && "$valor" -gt 0 ]]; then
       echo "$valor"
@@ -94,19 +90,22 @@ crear_usuario() {
     break
   done
 
-  dias_exp=$(leer_numero_valido " DÍAS PARA EXPIRAR: ")
-  conexiones=$(leer_numero_valido " CONEXIONES: ")
+  # Pedir primero días de expiración, luego conexiones
+  dias_exp=$(leer_numero_valido " ➤ ¿Cuántos días hasta la expiración?:")
+  conexiones=$(leer_numero_valido " ➤ ¿Límite de conexiones simultáneas?:")
 
-  fecha_exp=$(date -d "+$dias_exp days" +"%Y-%m-%d")
-  fecha_mostrar=$(date -d "+$dias_exp days" +"%b/%d/%Y")
+  # Calcular fechas
+  fecha_exp=$(date -d "+$dias_exp days" +"%Y-%m-%d" 2>/dev/null || echo "N/A")
+  fecha_mostrar=$(date -d "$fecha_exp" +"%b/%d/%Y" 2>/dev/null || echo "N/A")
 
-  # Crear usuario sin acceso shell (solo para túneles)
+  # Crear usuario
   useradd -e "$fecha_exp" -M -s /usr/sbin/nologin "$nuevo_usuario" &>/dev/null
   echo "$nuevo_usuario:$nueva_pass" | chpasswd
 
-  # Guardar usuario, contraseña y fecha de expiración en archivo seguro
+  # Guardar registro
   echo "$nuevo_usuario $nueva_pass $fecha_exp" >> "$USUARIOS_FILE"
 
+  # Mostrar resumen
   clear
   echo -e "${CYAN}════════════════════════════════════════════════════════════════════════════${RESET}"
   printf "            ${YELLOW}USUARIO CREADO CON ÉXITO!${RESET}\n"
