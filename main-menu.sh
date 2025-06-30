@@ -33,7 +33,8 @@ CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')%
 
 # ══════ PUERTOS AGRUPADOS ══════
 obtener_puertos_agrupados() {
-  declare -A grupos
+  declare -A grupos_unicos
+  declare -A grupos_finales
 
   while read -r linea; do
     puerto=$(echo "$linea" | awk '{split($5,p,":"); print p[length(p)]}')
@@ -58,19 +59,24 @@ obtener_puertos_agrupados() {
       *)               grupo=$(echo "$servicio" | tr 'a-z' 'A-Z') ;;
     esac
 
-    grupos["$grupo"]+="$puerto "
+    # Evitar duplicados
+    clave="$grupo:$puerto"
+    if [[ -z "${grupos_unicos[$clave]}" ]]; then
+      grupos_unicos["$clave"]=1
+      grupos_finales["$grupo"]+="$puerto "
+    fi
   done < <(ss -tulnp 2>/dev/null | awk 'NR>1')
 
-  if (( ${#grupos[@]} == 0 )); then
+  if (( ${#grupos_finales[@]} == 0 )); then
     echo -e "  ${YELLOW}[!] No hay puertos activos detectados.${RESET}"
     return
   fi
 
-  IFS=$'\n' keys=($(printf "%s\n" "${!grupos[@]}" | sort))
+  IFS=$'\n' keys=($(printf "%s\n" "${!grupos_finales[@]}" | sort))
   total=${#keys[@]}
   for ((i=0; i<total; i+=2)); do
-    k1=${keys[i]}; p1=${grupos[$k1]}
-    k2=${keys[i+1]}; p2=${grupos[$k2]}
+    k1=${keys[i]}; p1=${grupos_finales[$k1]}
+    k2=${keys[i+1]}; p2=${grupos_finales[$k2]}
     printf "  %-20s: %-20s" "$k1" "$p1"
     if [ -n "$k2" ]; then
       printf "  %-20s: %s" "$k2" "$p2"
