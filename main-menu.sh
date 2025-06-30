@@ -34,10 +34,12 @@ CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')%
 # ══════ PUERTOS AGRUPADOS ══════
 obtener_puertos_agrupados() {
   declare -A grupos
-  ss -tulnp 2>/dev/null | awk 'NR>1' | while read -r linea; do
+
+  while read -r linea; do
     puerto=$(echo "$linea" | awk '{split($5,p,":"); print p[length(p)]}')
     servicio=$(echo "$linea" | grep -oP 'users:\(\(".*?"' | cut -d'"' -f2)
     [ -z "$servicio" ] && servicio="desconocido"
+
     case "$servicio" in
       dropbear)        grupo="DROPBEAR" ;;
       sshd)            grupo="SSHD" ;;
@@ -55,8 +57,14 @@ obtener_puertos_agrupados() {
       zivpn)           grupo="ZIVPN" ;;
       *)               grupo=$(echo "$servicio" | tr 'a-z' 'A-Z') ;;
     esac
+
     grupos["$grupo"]+="$puerto "
-  done
+  done < <(ss -tulnp 2>/dev/null | awk 'NR>1')
+
+  if (( ${#grupos[@]} == 0 )); then
+    echo -e "  ${YELLOW}[!] No hay puertos activos detectados.${RESET}"
+    return
+  fi
 
   IFS=$'\n' keys=($(printf "%s\n" "${!grupos[@]}" | sort))
   total=${#keys[@]}
