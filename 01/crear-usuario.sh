@@ -49,16 +49,17 @@ mostrar_tabla_usuarios() {
 
 # ═════════════════════════════════════════════════════
 leer_numero_valido() {
-  local prompt=$1
+leer_numero_valido() {
+  local prompt="$1"
   local valor
   while true; do
-    echo -ne "$prompt"
+    printf "%s" "$prompt"
     read -r valor
     if [[ "$valor" =~ ^[0-9]+$ && "$valor" -gt 0 ]]; then
       echo "$valor"
       break
     else
-      echo -e "${RED} [✘] Entrada inválida. Ingresa solo números enteros positivos.${RESET}"
+      echo -e "${RED}[✘] Entrada inválida. Ingresa solo números enteros positivos.${RESET}"
     fi
   done
 }
