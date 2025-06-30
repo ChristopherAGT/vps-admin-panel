@@ -6,6 +6,11 @@ YELLOW='\033[1;33m'
 RED='\033[1;31m'
 RESET='\033[0m'
 
+USUARIOS_FILE="/etc/usuarios_panel.txt"
+# Asegura que el archivo exista y tenga permisos restrictivos
+touch "$USUARIOS_FILE"
+chmod 600 "$USUARIOS_FILE"
+
 # Obtener IP del servidor
 IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
 
@@ -20,24 +25,22 @@ mostrar_tabla_usuarios() {
   echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────${RESET}"
 
   n=1
-  while IFS=: read -r user _ uid _ _ _ shell; do
-    if [[ $uid -ge 1000 && "$shell" != "/usr/sbin/nologin" && "$shell" != "/bin/false" ]]; then
-      nombre=$(printf "%-17s" "$user")
-      pass="********"
-      exp_raw=$(chage -l "$user" | grep "Account expires" | cut -d: -f2- | xargs)
-      if [[ "$exp_raw" == "never" ]]; then
-        fecha="N/A"
-        dias="--"
-      else
-        fecha=$(date -d "$exp_raw" +"%b%d/%y")
-        dias=$(( ( $(date -d "$exp_raw" +%s) - $(date +%s) ) / 86400 ))
-      fi
+  while IFS=' ' read -r user pass exp; do
+    # Extraer fecha y dias restantes
+    if [[ -z "$user" ]]; then
+      continue
+    fi
+
+    if id -u "$user" &>/dev/null; then
+      exp_date=$(date -d "$exp" +"%b%d/%y" 2>/dev/null || echo "N/A")
+      dias_left=$(( ( $(date -d "$exp" +%s) - $(date +%s) ) / 86400 ))
+      if (( dias_left < 0 )); then dias_left=0; fi
       lim="--"
       estado="ULK"
-      printf "  %-2s) %-17s %-15s %-10s %-4s  %-3s  %-s\n" "$n" "$nombre" "$pass" "$fecha" "$dias" "$lim" "$estado"
+      printf "  %-2s) %-17s %-15s %-10s %-4s  %-3s  %-s\n" "$n" "$user" "$pass" "$exp_date" "$dias_left" "$lim" "$estado"
       ((n++))
     fi
-  done < /etc/passwd
+  done < "$USUARIOS_FILE"
 
   echo -e "${CYAN}${LINEA}${RESET}"
   echo -e "  [0] > VOLVER"
@@ -97,8 +100,12 @@ crear_usuario() {
   fecha_exp=$(date -d "+$dias_exp days" +"%Y-%m-%d")
   fecha_mostrar=$(date -d "+$dias_exp days" +"%b/%d/%Y")
 
-  useradd -e "$fecha_exp" -M -s /bin/bash "$nuevo_usuario" &>/dev/null
+  # Crear usuario sin acceso shell (solo para túneles)
+  useradd -e "$fecha_exp" -M -s /usr/sbin/nologin "$nuevo_usuario" &>/dev/null
   echo "$nuevo_usuario:$nueva_pass" | chpasswd
+
+  # Guardar usuario, contraseña y fecha de expiración en archivo seguro
+  echo "$nuevo_usuario $nueva_pass $fecha_exp" >> "$USUARIOS_FILE"
 
   clear
   echo -e "${CYAN}════════════════════════════════════════════════════════════════════════════${RESET}"
