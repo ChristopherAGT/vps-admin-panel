@@ -9,7 +9,7 @@ clear
 echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════════${RESET}"
 printf "               ${YELLOW}ADMINISTRACIÓN DE USUARIOS SSH - PANEL V16${RESET}\n"
 echo -e "${CYAN}══════════════════════════════════════════════════════════════════════════════${RESET}"
-echo -e "  [1]> NUEVO USUARIO SSH"
+echo -e "  [1]> CRAR NUEVO USUARIO"
 echo -e "  [2]> CREAR USUARIO TEMPORAL"
 echo -e "  [3]> REMOVER USUARIO"
 echo -e "  [4]> RENOVAR USUARIO"
