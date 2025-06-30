@@ -36,7 +36,9 @@ obtener_puertos_agrupados() {
   declare -A grupos_unicos
   declare -A grupos_finales
 
-  while read -r linea; do
+  mapfile -t lineas < <(ss -tulnp 2>/dev/null | awk 'NR>1')
+
+  for linea in "${lineas[@]}"; do
     puerto=$(echo "$linea" | awk '{split($5,p,":"); print p[length(p)]}')
     servicio=$(echo "$linea" | grep -oP 'users:\(\(".*?"' | cut -d'"' -f2)
     [ -z "$servicio" ] && servicio="desconocido"
@@ -59,13 +61,12 @@ obtener_puertos_agrupados() {
       *)               grupo=$(echo "$servicio" | tr 'a-z' 'A-Z') ;;
     esac
 
-    # Evitar duplicados
     clave="$grupo:$puerto"
     if [[ -z "${grupos_unicos[$clave]}" ]]; then
       grupos_unicos["$clave"]=1
       grupos_finales["$grupo"]+="$puerto "
     fi
-  done < <(ss -tulnp 2>/dev/null | awk 'NR>1')
+  done
 
   if (( ${#grupos_finales[@]} == 0 )); then
     echo -e "  ${YELLOW}[!] No hay puertos activos detectados.${RESET}"
