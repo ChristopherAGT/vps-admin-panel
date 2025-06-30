@@ -6,10 +6,10 @@ YELLOW='\033[1;33m'
 RED='\033[1;31m'
 RESET='\033[0m'
 
-# Obtener IP del servidor
+# IP del servidor
 IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
 
-# Archivo base de datos de usuarios
+# Base de datos
 DB="/etc/usuarios_creados.db"
 touch "$DB"
 chmod 600 "$DB"
@@ -40,57 +40,69 @@ mostrar_tabla_usuarios() {
 }
 
 # ═════════════════════════════════════════════════════
-leer_input_validado() {
-  local prompt="$1"
+validar_input() {
+  local input="$1"
   local regex="$2"
   local maxlen="$3"
-  local input
+
+  if (( ${#input} > maxlen )); then
+    echo -e "${RED}[✘] Máximo permitido: $maxlen caracteres.${RESET}"
+    return 1
+  fi
+
+  if [[ "$input" =~ $regex ]]; then
+    return 0
+  else
+    echo -e "${RED}[✘] Caracteres no permitidos.${RESET}"
+    return 1
+  fi
+}
+
+# ═════════════════════════════════════════════════════
+leer_input() {
+  local varname="$1"
+  local prompt="$2"
+  local regex="$3"
+  local maxlen="$4"
+  local value
 
   while true; do
     echo -ne "$prompt"
-    read -r input
-
-    if (( ${#input} > maxlen )); then
-      echo -e "${RED}[✘] Máximo permitido: $maxlen caracteres.${RESET}"
-      continue
-    fi
-
-    if [[ "$input" =~ $regex ]]; then
-      echo "$input"
-      break
-    else
-      echo -e "${RED}[✘] Caracteres no permitidos.${RESET}"
-    fi
+    read -r value
+    validar_input "$value" "$regex" "$maxlen" && break
   done
+  eval "$varname='$value'"
 }
 
 # ═════════════════════════════════════════════════════
 leer_numero() {
-  local prompt="$1"
-  local min="$2"
-  local max="$3"
-  local input
+  local varname="$1"
+  local prompt="$2"
+  local min="$3"
+  local max="$4"
+  local value
 
   while true; do
     echo -ne "$prompt"
-    read -r input
-    input=$(echo "$input" | tr -cd '0-9')
-
-    if [[ "$input" =~ ^[0-9]+$ && "$input" -ge "$min" && "$input" -le "$max" ]]; then
-      echo "$input"
+    read -r value
+    value=$(echo "$value" | tr -cd '0-9')
+    if [[ "$value" =~ ^[0-9]+$ && "$value" -ge "$min" && "$value" -le "$max" ]]; then
       break
     else
       echo -e "${RED}[✘] Solo números entre $min y $max permitidos.${RESET}"
     fi
   done
+  eval "$varname='$value'"
 }
 
 # ═════════════════════════════════════════════════════
 crear_usuario() {
-  nuevo_usuario=$(leer_input_validado " NUEVO USUARIO: " '^[a-zA-Z0-9._@-]+$' 16)
-  nueva_pass=$(leer_input_validado  " CONTRASEÑA: "     '^[a-zA-Z0-9._@-]+$' 16)
-  dias_exp=$(leer_numero " DÍAS PARA EXPIRAR (1-365): " 1 365)
-  conexiones=$(leer_numero " CONEXIONES (1-999): " 1 999)
+  local nuevo_usuario nueva_pass dias_exp conexiones
+
+  leer_input nuevo_usuario " NUEVO USUARIO: " '^[a-zA-Z0-9._@-]+$' 16
+  leer_input nueva_pass   " CONTRASEÑA: "     '^[a-zA-Z0-9._@-]+$' 16
+  leer_numero dias_exp    " DÍAS PARA EXPIRAR (1-365): " 1 365
+  leer_numero conexiones  " CONEXIONES (1-999): " 1 999
 
   # Calcular fechas
   fecha_exp=$(date -d "+$dias_exp days" +"%Y-%m-%d")
@@ -100,7 +112,7 @@ crear_usuario() {
   useradd -e "$fecha_exp" -M -s /bin/false "$nuevo_usuario" &>/dev/null
   echo "$nuevo_usuario:$nueva_pass" | chpasswd
 
-  # Guardar en archivo
+  # Guardar en base de datos
   echo "$nuevo_usuario:$nueva_pass:$fecha_mostrar:$dias_exp:$conexiones:ULK" >> "$DB"
 
   # Mostrar resumen
