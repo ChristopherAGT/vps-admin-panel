@@ -31,14 +31,44 @@ RAM_CACHE="${cache}MB"
 CPU_CORES=$(nproc)
 CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')%
 
-# ══════ FUNCIÓN: PUERTOS ACTIVOS CON SERVICIOS ══════
-obtener_puertos_activos() {
+# ══════ PUERTOS AGRUPADOS ══════
+obtener_puertos_agrupados() {
+  declare -A grupos
   ss -tulnp 2>/dev/null | awk 'NR>1' | while read -r linea; do
     puerto=$(echo "$linea" | awk '{split($5,p,":"); print p[length(p)]}')
     servicio=$(echo "$linea" | grep -oP 'users:\(\(".*?"' | cut -d'"' -f2)
     [ -z "$servicio" ] && servicio="desconocido"
-    printf "%-25s : %s\n" "$servicio" "$puerto"
-  done | sort -u
+    case "$servicio" in
+      dropbear)        grupo="DROPBEAR" ;;
+      sshd)            grupo="SSHD" ;;
+      stunnel4)        grupo="SSL" ;;
+      apache2)         grupo="APACHE" ;;
+      badvpn-udpgw)    grupo="BADVPN" ;;
+      udp-custom)      grupo="UDP-CUSTOM" ;;
+      udpmod)          grupo="UDP-MOD" ;;
+      udp-request)     grupo="UDP-REQUEST" ;;
+      ntpd)            grupo="NTP" ;;
+      systemd-resolve) grupo="DNS" ;;
+      python3)         grupo="PYTHON" ;;
+      filebrowser)     grupo="FILEBROWSER" ;;
+      v2ray)           grupo="V2RAY" ;;
+      zivpn)           grupo="ZIVPN" ;;
+      *)               grupo=$(echo "$servicio" | tr 'a-z' 'A-Z') ;;
+    esac
+    grupos["$grupo"]+="$puerto "
+  done
+
+  IFS=$'\n' keys=($(printf "%s\n" "${!grupos[@]}" | sort))
+  total=${#keys[@]}
+  for ((i=0; i<total; i+=2)); do
+    k1=${keys[i]}; p1=${grupos[$k1]}
+    k2=${keys[i+1]}; p2=${grupos[$k2]}
+    printf "  %-20s: %-20s" "$k1" "$p1"
+    if [ -n "$k2" ]; then
+      printf "  %-20s: %s" "$k2" "$p2"
+    fi
+    echo
+  done
 }
 
 # ══════ MOSTRAR PANEL ══════
@@ -56,14 +86,7 @@ mostrar_panel() {
   printf "  %-20s %-20s %-20s\n" "Total:   $RAM_TOTAL" "Usada: $RAM_USED" "Libre: $RAM_FREE"
   printf "  %-20s %-20s\n" "Buffer:  $RAM_BUFFER" "Cache: $RAM_CACHE"
   echo -e "${CYAN}╠═════════════════════════ PUERTOS ACTIVOS ════════════════════════════════════╣${RESET}"
-
-  mapfile -t PUERTOS < <(obtener_puertos_activos)
-  for ((i = 0; i < ${#PUERTOS[@]}; i+=2)); do
-    LEFT="${PUERTOS[i]}"
-    RIGHT="${PUERTOS[i+1]}"
-    printf "  %-39s %-39s\n" "$LEFT" "${RIGHT:-}"
-  done
-
+  obtener_puertos_agrupados
   echo -e "${CYAN}╠═════════════════════════ ESTADO DE CUENTAS ══════════════════════════════════╣${RESET}"
   echo -e "       ACTIVAS: 1     EXPIRADAS: 0     BLOQUEADAS: 0     TOTAL: 6"
   echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════════════════╝${RESET}"
