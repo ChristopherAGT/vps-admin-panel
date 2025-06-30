@@ -49,7 +49,6 @@ mostrar_tabla_usuarios() {
 
 # ═════════════════════════════════════════════════════
 leer_numero_valido() {
-leer_numero_valido() {
   local prompt="$1"
   local valor
   while true; do
