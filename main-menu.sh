@@ -134,7 +134,14 @@ ejecutar_opcion() {
     6) echo -e "${RED}Desinstalando...${RESET}"; sleep 1 ;;
     7) echo -e "${YELLOW}Saliendo del script...${RESET}"; exit 0 ;;
     8) echo -e "${CYAN}Reiniciando VPS...${RESET}"; reboot ;;
-    0) echo -e "${CYAN}Cerrando sesión VPS...${RESET}"; sleep 1; exit ;;
+    0) echo -e "${CYAN}Cerrando sesión VPS...${RESET}"
+  sleep 1
+  if [[ -n "$SSH_CONNECTION" ]]; then
+    pkill -KILL -t "$(tty)"
+  else
+    exit
+  fi
+  ;;
     *) echo -e "${RED}Opción no válida.${RESET}"; sleep 1 ;;
   esac
   read -p "Presiona Enter para volver al menú..." enter
