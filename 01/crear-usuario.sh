@@ -15,6 +15,11 @@ touch "$DB"
 chmod 600 "$DB"
 
 # ═════════════════════════════════════════════════════
+limpiar_base_de_datos() {
+  awk -F: 'NF == 6 && $1 != ""' "$DB" > /tmp/tmp_usuarios && mv /tmp/tmp_usuarios "$DB"
+}
+
+# ═════════════════════════════════════════════════════
 mostrar_tabla_usuarios() {
   clear
   echo -e "${CYAN}════════════════════════════════════════════════════════════${RESET}"
