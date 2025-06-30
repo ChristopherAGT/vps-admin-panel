@@ -134,11 +134,23 @@ ejecutar_opcion() {
     6) ;;
     7) exit 0 ;;  # Salir sin mensaje
     8)
-      echo -e "${CYAN}El VPS se reiniciará en 5 segundos...${RESET}"
+      # Obtener ancho de la terminal
+      WIDTH=$(tput cols)
+
+      # Mensaje centrado
+      mensaje="⚠️  El VPS se reiniciará en 5 segundos..."
+      padding=$(( (WIDTH - ${#mensaje}) / 2 ))
+      printf "\n%*s%s\n\n" $padding "" "${CYAN}${mensaje}${RESET}"
+
+      # Contador centrado con estilo 》5《
       for i in {5..1}; do
-        echo -ne "${CYAN}$i...${RESET}\r"
+        contador="》$i《"
+        padding=$(( (WIDTH - ${#contador}) / 2 ))
+        printf "%*s%s\r" $padding "" "${CYAN}${contador}${RESET}"
         sleep 1
       done
+
+      echo ""  # Salto de línea
       reboot
       ;;
     0)
@@ -149,6 +161,7 @@ ejecutar_opcion() {
       sleep 1
       ;;
   esac
+
   # Solo mostrar el menú si no se reinicia o sale
   if [[ "$1" != "7" && "$1" != "8" ]]; then
     read -p "Presiona Enter para volver al menú..." enter
