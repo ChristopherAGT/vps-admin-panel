@@ -126,31 +126,33 @@ mostrar_panel() {
 # ══════ LÓGICA DEL MENÚ ══════
 ejecutar_opcion() {
   case "$1" in
-    1) ;;  # Sin mensaje ni pausa
+    1) ;;
     2) ;;
     3) ;;
     4) ;;
     5) ;;
     6) ;;
-    7) exit 0 ;;  # Salir sin mensaje
+    7) exit 0 ;;
     8)
-      # Obtener ancho de la terminal
-      WIDTH=$(tput cols)
+      WIDTH=78  # Coincide con tus bordes decorativos
 
       # Mensaje centrado
       mensaje="⚠️  El VPS se reiniciará en 5 segundos..."
-      padding=$(( (WIDTH - ${#mensaje}) / 2 ))
-      printf "\n%*s%s\n\n" $padding "" "${CYAN}${mensaje}${RESET}"
+      espacio=$(( (WIDTH - ${#mensaje}) / 2 ))
+      printf "\n%*s" $espacio ""
+      echo -e "${CYAN}${mensaje}${RESET}"
+      echo
 
       # Contador centrado con estilo 》5《
       for i in {5..1}; do
         contador="》$i《"
-        padding=$(( (WIDTH - ${#contador}) / 2 ))
-        printf "%*s%s\r" $padding "" "${CYAN}${contador}${RESET}"
+        espacio=$(( (WIDTH - ${#contador}) / 2 ))
+        printf "%*s" $espacio ""
+        echo -e "${CYAN}${contador}${RESET}"
         sleep 1
       done
 
-      echo ""  # Salto de línea
+      echo ""
       reboot
       ;;
     0)
@@ -162,7 +164,6 @@ ejecutar_opcion() {
       ;;
   esac
 
-  # Solo mostrar el menú si no se reinicia o sale
   if [[ "$1" != "7" && "$1" != "8" ]]; then
     read -p "Presiona Enter para volver al menú..." enter
     mostrar_panel
