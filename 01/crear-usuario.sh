@@ -20,7 +20,7 @@ mostrar_tabla_usuarios() {
   echo -e "${CYAN}════════════════════════════════════════════════════════════${RESET}"
   echo -e "                   ${YELLOW}CREAR USUARIOS${RESET}"
   echo -e "${CYAN}════════════════════════════════════════════════════════════${RESET}"
-  echo -e "  N° Usuario         Contraseña     Fecha     Días  Con  Sta"
+  echo -e "  N°  Usuario           Contraseña        Fecha     Días  Con   Sta"
   echo -e "${CYAN}────────────────────────────────────────────────────────────${RESET}"
 
   if [[ ! -s "$DB" ]]; then
@@ -28,8 +28,15 @@ mostrar_tabla_usuarios() {
   else
     n=1
     while IFS=':' read -r usuario clave fecha dias con estado; do
-      printf "  %-2s) %-15s %-14s %-9s %-4s  %-3s  %-s\n" \
-        "$n" "$usuario" "$clave" "$fecha" "$dias" "$con" "$estado"
+      # Validar campos: todos deben estar presentes y válidos
+      [[ -z "$usuario" || -z "$clave" || -z "$fecha" || -z "$dias" || -z "$con" || -z "$estado" ]] && continue
+
+      # Truncar si excede el límite visual permitido
+      usuario_fmt=$(printf "%.16s" "$usuario")
+      clave_fmt=$(printf "%.16s" "$clave")
+
+      printf "  %-3s %-16s %-16s %-9s %-4s  %-5s %-5s\n" \
+        "$n" "$usuario_fmt" "$clave_fmt" "$fecha" "$dias" "$con" "$estado"
       ((n++))
     done < "$DB"
   fi
