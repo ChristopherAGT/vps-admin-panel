@@ -15,11 +15,6 @@ touch "$DB"
 chmod 600 "$DB"
 
 # ═════════════════════════════════════════════════════
-limpiar_base_de_datos() {
-  awk -F: 'NF == 6 && $1 != ""' "$DB" > /tmp/tmp_usuarios && mv /tmp/tmp_usuarios "$DB"
-}
-
-# ═════════════════════════════════════════════════════
 mostrar_tabla_usuarios() {
   clear
   echo -e "${CYAN}════════════════════════════════════════════════════════════${RESET}"
@@ -126,9 +121,6 @@ crear_usuario() {
 
   # Guardar en base de datos
   echo "$nuevo_usuario:$nueva_pass:$fecha_mostrar:$dias_exp:$conexiones:ULK" >> "$DB"
-
-  echo "$nuevo_usuario:$nueva_pass:$fecha_mostrar:$dias_exp:$conexiones:ULK" >> "$DB"
-  limpiar_base_de_datos
   
   # Mostrar resumen
   clear
