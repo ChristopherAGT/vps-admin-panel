@@ -1,51 +1,51 @@
 #!/bin/bash
-set -e
+set -uo pipefail
 
 # ============================================================
-#        🚀 ADM-LITE SSH BACKUP MANAGER PREMIUM
+#        🚀 ADM-LITE SSH BACKUP MANAGER PREMIUM v2.0
 # ============================================================
 #
 # Backup y restauración ADM-Lite HWID
 #
 # Incluye:
 #   👤 Usuarios Linux
-#   🔑 Cuentas HWID ADM-Lite
-#   📅 Fechas de vencimiento
+#   🔑 Cuentas HWID
+#   📅 Vencimientos
 #   📊 Tráfico
 #   📦 Cuotas
 #   🖼️ Banners SSH
 #   🔒 Límites SSH
 #   ⚙️ PAM
-#   🛠️ Scripts del sistema
 #
 # Restauración:
-#   💾 Archivo local
+#   💾 Local
 #   ☁️ URL / Nube
+#
+# Mejoras:
+#   ✅ Validación root
+#   ✅ Backup preventivo
+#   ✅ Validación TAR
+#   ✅ Validación SSH
+#   ✅ Restauración segura
 #
 # ============================================================
 
 
 # ============================================================
-#                VALIDACIÓN ROOT
+# CONFIGURACIÓN
 # ============================================================
 
-if [ "$EUID" -ne 0 ]; then
-    echo "❌ Este script debe ejecutarse como root"
-    exit 1
-fi
-
-
-# ============================================================
-#                VARIABLES
-# ============================================================
 
 BACKUP_DIR="/root"
 DATE=$(date +"%Y-%m-%d_%H-%M-%S")
 
+BACKUP_NAME="adm-lite-backup-$DATE.tar.gz"
+
 
 # ============================================================
-#                COLORES
+# COLORES
 # ============================================================
+
 
 GREEN="\033[1;32m"
 BLUE="\033[1;34m"
@@ -59,7 +59,7 @@ RESET="\033[0m"
 
 
 # ============================================================
-#                FUNCIONES VISUALES
+# FUNCIONES VISUALES
 # ============================================================
 
 
@@ -76,14 +76,12 @@ banner(){
 clear
 
 echo -e "${BLUE}"
-
 echo "╔══════════════════════════════════════════════╗"
 echo "║                                              ║"
 echo "║       🚀 ADM-LITE SSH BACKUP MANAGER         ║"
-echo "║             PREMIUM EDITION                  ║"
+echo "║             PREMIUM EDITION v2.0             ║"
 echo "║                                              ║"
 echo "╚══════════════════════════════════════════════╝"
-
 echo -e "${RESET}"
 
 }
@@ -124,9 +122,35 @@ echo -e "${YELLOW}➜ $1${RESET}"
 
 
 
+warning(){
+
+echo -e "${RED}⚠️ $1${RESET}"
+
+}
+
+
 
 # ============================================================
-#                CREAR BACKUP
+# VERIFICACIÓN ROOT
+# ============================================================
+
+
+check_root(){
+
+if [ "$(id -u)" != "0" ]; then
+
+error "Este programa debe ejecutarse como root"
+
+exit 1
+
+fi
+
+}
+
+
+
+# ============================================================
+# CREAR BACKUP
 # ============================================================
 
 
@@ -136,8 +160,7 @@ create_backup(){
 banner
 
 
-BACKUP_FILE="$BACKUP_DIR/adm-lite-backup-$DATE.tar.gz"
-
+BACKUP_FILE="$BACKUP_DIR/$BACKUP_NAME"
 
 
 line
@@ -149,29 +172,63 @@ line
 
 echo ""
 
-info "Recolectando archivos ADM-Lite..."
+info "Preparando información del backup..."
+
+
+
+TEMP_INFO="/tmp/adm-lite-backup-info.txt"
+
+
+cat > "$TEMP_INFO" <<EOF
+========================================
+ADM-LITE SSH BACKUP MANAGER
+========================================
+
+Fecha:
+$(date)
+
+Servidor:
+$(hostname)
+
+Sistema:
+$(uname -a)
+
+Backup:
+$BACKUP_NAME
+
+========================================
+EOF
+
+
+
+echo ""
+
+info "Comprimiendo archivos..."
 
 
 
 tar --ignore-failed-read \
--czpvf "$BACKUP_FILE" \
-
+    -czpvf "$BACKUP_FILE" \
+    "$TEMP_INFO" \
     /etc/adm-lite \
     /etc/ssh/.ssh.db \
     /etc/ssh/traffic.db \
     /etc/ssh/quotas.db \
     /etc/ssh/banners \
+    /etc/ssh/sshd_config \
     /etc/ssh/sshd_config.d \
-    /etc/ssh/*.db \
-    /etc/ssh/* \
     /etc/passwd \
     /etc/shadow \
     /etc/group \
     /etc/gshadow \
     /etc/pam.d \
-    /usr/local/bin \
-    /usr/local/sbin \
-    2>/dev/null
+    /etc/security \
+    /usr/local/bin/pam_limit.sh \
+    2>/dev/null || true
+
+
+
+rm -f "$TEMP_INFO"
 
 
 
@@ -192,10 +249,27 @@ echo -e "${WHITE}📁 Archivo generado:${RESET}"
 echo "$BACKUP_FILE"
 
 
-
 echo ""
 
 ls -lh "$BACKUP_FILE"
+
+
+
+echo ""
+
+info "Verificando integridad..."
+
+
+
+if tar -tzf "$BACKUP_FILE" >/dev/null 2>&1; then
+
+success "Backup verificado correctamente"
+
+else
+
+error "El backup parece estar corrupto"
+
+fi
 
 
 
@@ -206,20 +280,21 @@ pause
 
 
 
-
 # ============================================================
-#                PREPARAR RESTAURACIÓN
+# PREPARAR RESTAURACIÓN
 # ============================================================
 
 
 prepare_restore(){
 
 
+echo ""
+
+info "Creando copia preventiva del sistema..."
+
+
+
 PRE="/root/pre_restore_backup_$DATE"
-
-
-
-info "Creando backup preventivo..."
 
 
 
@@ -228,11 +303,16 @@ mkdir -p "$PRE"
 
 
 cp -a /etc/passwd "$PRE/" 2>/dev/null || true
+
 cp -a /etc/shadow "$PRE/" 2>/dev/null || true
+
 cp -a /etc/group "$PRE/" 2>/dev/null || true
+
 cp -a /etc/gshadow "$PRE/" 2>/dev/null || true
-cp -a /etc/ssh "$PRE/" 2>/dev/null || true
-cp -a /etc/adm-lite "$PRE/" 2>/dev/null || true
+
+cp -a /etc/ssh/sshd_config "$PRE/" 2>/dev/null || true
+
+cp -a /etc/ssh/sshd_config.d "$PRE/" 2>/dev/null || true
 
 
 
@@ -240,13 +320,19 @@ echo ""
 
 line
 
-echo -e "${RED}⚠️ ADVERTENCIA${RESET}"
+warning "ATENCIÓN"
+
+line
+
 
 echo ""
 
-echo "La restauración reemplazará configuraciones actuales."
+echo "La restauración reemplazará archivos actuales."
 
-echo "Se recomienda usarlo en un VPS limpio."
+echo ""
+
+echo "Backup preventivo:"
+echo "$PRE"
 
 echo ""
 
@@ -271,7 +357,7 @@ return 0
 }
 
 # ============================================================
-#                EJECUTAR RESTAURACIÓN
+# EJECUTAR RESTAURACIÓN
 # ============================================================
 
 
@@ -296,13 +382,40 @@ echo ""
 
 line
 
+info "Deteniendo servicio SSH temporalmente..."
+
+line
+
+
+
+systemctl stop ssh 2>/dev/null || \
+systemctl stop sshd 2>/dev/null || true
+
+
+
+echo ""
+
+line
+
 info "Restaurando archivos..."
 
 line
 
 
 
-tar -xzpvf "$BACKUP" -C /
+if tar -xzpvf "$BACKUP" -C /; then
+
+success "Archivos restaurados correctamente"
+
+else
+
+error "Error durante la restauración"
+
+pause
+
+return
+
+fi
 
 
 
@@ -312,21 +425,71 @@ info "Aplicando permisos..."
 
 
 
+if [ -d /etc/adm-lite ]; then
+
+chmod 755 /etc/adm-lite 2>/dev/null || true
+
+fi
+
+
+
+if [ -d /etc/adm-lite/userDIR ]; then
+
 chmod 700 /etc/adm-lite/userDIR 2>/dev/null || true
 
 chmod 644 /etc/adm-lite/userDIR/* 2>/dev/null || true
+
+fi
+
+
+
+chmod 600 /etc/ssh/*.db 2>/dev/null || true
 
 
 
 echo ""
 
-info "Reiniciando servicios SSH..."
+info "Validando configuración SSH..."
 
 
 
-systemctl restart ssh 2>/dev/null || \
-systemctl restart sshd 2>/dev/null || \
-systemctl restart ssh.service 2>/dev/null || true
+if command -v sshd >/dev/null 2>&1; then
+
+
+if sshd -t 2>/dev/null; then
+
+success "Configuración SSH válida"
+
+else
+
+warning "SSH tiene errores de configuración"
+
+fi
+
+
+fi
+
+
+
+echo ""
+
+info "Iniciando servicio SSH..."
+
+
+
+if systemctl start ssh 2>/dev/null; then
+
+success "SSH iniciado"
+
+elif systemctl start sshd 2>/dev/null; then
+
+success "SSHD iniciado"
+
+else
+
+warning "No se pudo iniciar SSH automáticamente"
+
+fi
 
 
 
@@ -342,9 +505,9 @@ line
 
 echo ""
 
-echo -e "${WHITE}🛡️ Backup preventivo guardado:${RESET}"
+echo -e "${WHITE}🛡️ Backup preventivo guardado en:${RESET}"
 
-echo "/root/pre_restore_backup_$DATE"
+echo "$PRE"
 
 
 
@@ -357,7 +520,7 @@ pause
 
 
 # ============================================================
-#                RESTAURACIÓN LOCAL
+# RESTAURACIÓN LOCAL
 # ============================================================
 
 
@@ -367,10 +530,9 @@ restore_local(){
 banner
 
 
-
 line
 
-echo -e "${MAGENTA}💾 RESTAURACIÓN LOCAL${RESET}"
+echo -e "${MAGENTA}💾 RESTAURACIÓN DESDE ARCHIVO LOCAL${RESET}"
 
 line
 
@@ -384,7 +546,7 @@ echo ""
 
 
 
-BACKUPS=$(ls /root/adm-lite-backup-*.tar.gz 2>/dev/null || true)
+BACKUPS=$(find /root -maxdepth 1 -name "adm-lite-backup-*.tar.gz" 2>/dev/null)
 
 
 
@@ -406,7 +568,7 @@ echo "$BACKUPS"
 
 echo ""
 
-read -p "📦 Nombre del backup: " BACKUP
+read -p "📦 Nombre completo del backup: " BACKUP
 
 
 
@@ -430,15 +592,23 @@ fi
 
 
 
+info "Validando backup..."
+
+
+
 if ! tar -tzf "$BACKUP" >/dev/null 2>&1; then
 
-error "Backup corrupto o inválido"
+error "Backup inválido o corrupto"
 
 pause
 
 return
 
 fi
+
+
+
+success "Backup válido"
 
 
 
@@ -451,9 +621,8 @@ execute_restore "$BACKUP"
 
 
 
-
 # ============================================================
-#                RESTAURACIÓN DESDE NUBE
+# RESTAURACIÓN DESDE URL / NUBE
 # ============================================================
 
 
@@ -463,10 +632,9 @@ restore_cloud(){
 banner
 
 
-
 line
 
-echo -e "${MAGENTA}☁️ RESTAURACIÓN DESDE URL${RESET}"
+echo -e "${MAGENTA}☁️ RESTAURACIÓN DESDE URL / NUBE${RESET}"
 
 line
 
@@ -478,7 +646,7 @@ read -p "🔗 URL del backup: " URL
 
 
 
-TEMP="/root/adm-lite-cloud-restore-$DATE.tar.gz"
+TEMP="/root/adm-lite-cloud-restore.tar.gz"
 
 
 
@@ -491,57 +659,54 @@ info "Descargando backup..."
 if command -v curl >/dev/null 2>&1; then
 
 
-curl -L "$URL" -o "$TEMP"
+curl -L --progress-bar "$URL" -o "$TEMP"
 
 
 
 elif command -v wget >/dev/null 2>&1; then
 
 
-wget "$URL" -O "$TEMP"
+wget --show-progress "$URL" -O "$TEMP"
 
 
 
 else
 
-
-error "No existe curl ni wget"
+error "No existe curl ni wget instalado"
 
 pause
 
 return
 
-
 fi
-
 
 
 
 if [ ! -s "$TEMP" ]; then
 
-
-error "Descarga fallida"
+error "La descarga falló"
 
 pause
 
 return
 
-
 fi
+
+
+
+info "Validando archivo descargado..."
 
 
 
 if ! tar -tzf "$TEMP" >/dev/null 2>&1; then
 
-
-error "El archivo descargado no es válido"
+error "El archivo descargado no es un backup válido"
 
 rm -f "$TEMP"
 
 pause
 
 return
-
 
 fi
 
@@ -568,9 +733,8 @@ rm -f "$TEMP"
 
 
 
-
 # ============================================================
-#                MENU RESTAURACIÓN
+# MENÚ RESTAURACIÓN
 # ============================================================
 
 
@@ -583,7 +747,6 @@ do
 
 
 banner
-
 
 
 line
@@ -610,7 +773,7 @@ read -p "Seleccione una opción: " OPTION
 
 
 
-case $OPTION in
+case "$OPTION" in
 
 
 1)
@@ -654,9 +817,8 @@ done
 
 
 
-
 # ============================================================
-#                MENU PRINCIPAL
+# MENÚ PRINCIPAL
 # ============================================================
 
 
@@ -696,7 +858,7 @@ read -p "Seleccione una opción: " OPTION
 
 
 
-case $OPTION in
+case "$OPTION" in
 
 
 1)
@@ -719,7 +881,7 @@ clear
 
 echo ""
 
-echo -e "${CYAN}👋 Cerrando ADM-LITE SSH BACKUP MANAGER${RESET}"
+echo -e "${CYAN}👋 Cerrando ADM-LITE BACKUP MANAGER...${RESET}"
 
 echo ""
 
@@ -748,10 +910,11 @@ done
 
 
 
-
 # ============================================================
-#                INICIO
+# INICIO DEL PROGRAMA
 # ============================================================
 
+
+check_root
 
 main_menu
