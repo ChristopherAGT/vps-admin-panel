@@ -5,20 +5,20 @@ set -e
 #        🚀 ADM-LITE SSH BACKUP MANAGER PREMIUM
 # ============================================================
 #
-# Sistema de Backup y Restauración ADM-Lite HWID
+# Backup y restauración ADM-Lite HWID
 #
 # Incluye:
 #   👤 Usuarios Linux
 #   🔑 Cuentas HWID
-#   📅 Fechas de vencimiento
+#   📅 Vencimientos
 #   📊 Tráfico
 #   📦 Cuotas
 #   🖼️ Banners SSH
 #   🔒 Límites SSH
-#   ⚙️ Configuración PAM
+#   ⚙️ PAM
 #
 # Restauración:
-#   💾 Archivo local
+#   💾 Local
 #   ☁️ URL / Nube
 #
 # ============================================================
@@ -57,7 +57,7 @@ echo -e "${BLUE}"
 echo "╔══════════════════════════════════════════════╗"
 echo "║                                              ║"
 echo "║       🚀 ADM-LITE SSH BACKUP MANAGER         ║"
-echo "║              PREMIUM EDITION                ║"
+echo "║             PREMIUM EDITION                  ║"
 echo "║                                              ║"
 echo "╚══════════════════════════════════════════════╝"
 echo -e "${RESET}"
@@ -83,11 +83,13 @@ echo -e "${GREEN}✅ $1${RESET}"
 }
 
 
+
 error(){
 
 echo -e "${RED}❌ $1${RESET}"
 
 }
+
 
 
 info(){
@@ -113,10 +115,11 @@ echo -e "${MAGENTA}📦 CREANDO COPIA DE SEGURIDAD${RESET}"
 
 line
 
+
 echo ""
 
 
-tar -czpvf "$BACKUP_FILE" \
+tar --ignore-failed-read -czpvf "$BACKUP_FILE" \
     /etc/adm-lite \
     /etc/ssh/.ssh.db \
     /etc/ssh/traffic.db \
@@ -154,7 +157,9 @@ echo ""
 ls -lh "$BACKUP_FILE"
 
 
+
 pause
+
 
 }
 
@@ -168,24 +173,20 @@ echo ""
 info "Creando copia preventiva del sistema..."
 
 
-mkdir -p "/root/pre_restore_backup_$DATE"
+PRE="/root/pre_restore_backup_$DATE"
+
+
+mkdir -p "$PRE"
 
 
 
-cp -a /etc/passwd \
-"/root/pre_restore_backup_$DATE/" 2>/dev/null || true
+cp -a /etc/passwd "$PRE/" 2>/dev/null || true
 
+cp -a /etc/shadow "$PRE/" 2>/dev/null || true
 
-cp -a /etc/shadow \
-"/root/pre_restore_backup_$DATE/" 2>/dev/null || true
+cp -a /etc/group "$PRE/" 2>/dev/null || true
 
-
-cp -a /etc/group \
-"/root/pre_restore_backup_$DATE/" 2>/dev/null || true
-
-
-cp -a /etc/gshadow \
-"/root/pre_restore_backup_$DATE/" 2>/dev/null || true
+cp -a /etc/gshadow "$PRE/" 2>/dev/null || true
 
 
 
@@ -197,7 +198,7 @@ echo -e "${RED}⚠️ ADVERTENCIA${RESET}"
 
 echo ""
 
-echo "Esta acción reemplazará configuraciones actuales."
+echo "La restauración reemplazará configuraciones actuales."
 
 echo ""
 
@@ -217,9 +218,11 @@ fi
 
 return 0
 
+
 }
 
-id="z9k1a2"
+
+
 execute_restore(){
 
 
@@ -253,7 +256,7 @@ tar -xzpvf "$BACKUP" -C /
 
 echo ""
 
-info "Ajustando permisos..."
+info "Verificando permisos..."
 
 
 
@@ -269,7 +272,9 @@ info "Reiniciando servicio SSH..."
 
 
 
-systemctl restart ssh 2>/dev/null || systemctl restart sshd
+systemctl restart ssh 2>/dev/null || \
+systemctl restart sshd 2>/dev/null || \
+systemctl restart ssh.service 2>/dev/null || true
 
 
 
@@ -285,7 +290,7 @@ line
 
 echo ""
 
-echo -e "${WHITE}🛡️ Backup preventivo guardado en:${RESET}"
+echo -e "${WHITE}🛡️ Backup preventivo:${RESET}"
 
 echo "/root/pre_restore_backup_$DATE"
 
@@ -293,9 +298,8 @@ echo "/root/pre_restore_backup_$DATE"
 
 pause
 
+
 }
-
-
 
 restore_local(){
 
@@ -312,10 +316,9 @@ line
 
 echo ""
 
-echo -e "${YELLOW}📂 Backups encontrados:${RESET}"
+echo -e "${YELLOW}📂 Backups disponibles:${RESET}"
 
 echo ""
-
 
 
 BACKUPS=$(ls /root/adm-lite-backup-*.tar.gz 2>/dev/null || true)
@@ -324,13 +327,11 @@ BACKUPS=$(ls /root/adm-lite-backup-*.tar.gz 2>/dev/null || true)
 
 if [ -z "$BACKUPS" ]; then
 
-
 error "No existen backups locales"
 
 pause
 
 return
-
 
 fi
 
@@ -339,9 +340,10 @@ fi
 echo "$BACKUPS"
 
 
+
 echo ""
 
-read -p "📦 Nombre del backup: " BACKUP
+read -p "📦 Escribe el nombre del backup: " BACKUP
 
 
 
@@ -355,13 +357,23 @@ fi
 
 if [ ! -f "$BACKUP" ]; then
 
-
 error "Archivo no encontrado"
 
 pause
 
 return
 
+fi
+
+
+
+if ! tar -tzf "$BACKUP" >/dev/null 2>&1; then
+
+error "El archivo no es un backup válido"
+
+pause
+
+return
 
 fi
 
@@ -383,9 +395,10 @@ banner
 
 line
 
-echo -e "${MAGENTA}☁️ RESTAURACIÓN DESDE NUBE${RESET}"
+echo -e "${MAGENTA}☁️ RESTAURACIÓN DESDE URL / NUBE${RESET}"
 
 line
+
 
 
 echo ""
@@ -400,7 +413,7 @@ TEMP="/root/adm-lite-cloud-restore.tar.gz"
 
 echo ""
 
-info "Descargando archivo..."
+info "Descargando backup..."
 
 
 
@@ -420,13 +433,11 @@ wget "$URL" -O "$TEMP"
 
 else
 
-
 error "No existe curl ni wget instalado"
 
 pause
 
 return
-
 
 fi
 
@@ -434,13 +445,25 @@ fi
 
 if [ ! -s "$TEMP" ]; then
 
-
-error "La descarga falló o el archivo está vacío"
+error "La descarga falló"
 
 pause
 
 return
 
+fi
+
+
+
+if ! tar -tzf "$TEMP" >/dev/null 2>&1; then
+
+error "El archivo descargado no es un backup válido"
+
+rm -f "$TEMP"
+
+pause
+
+return
 
 fi
 
@@ -484,6 +507,7 @@ line
 echo -e "${MAGENTA}💾 MENÚ DE RESTAURACIÓN${RESET}"
 
 line
+
 
 
 echo ""
@@ -562,6 +586,7 @@ echo -e "${MAGENTA}📌 MENÚ PRINCIPAL${RESET}"
 line
 
 
+
 echo ""
 
 echo " 1) 📦 Crear Copia de Seguridad"
@@ -569,6 +594,7 @@ echo " 1) 📦 Crear Copia de Seguridad"
 echo " 2) 💾 Restaurar Copia de Seguridad"
 
 echo " 0) 🚪 Salir"
+
 
 
 echo ""
