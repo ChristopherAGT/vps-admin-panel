@@ -7,7 +7,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="4.6.0"
+VERSION="1.0.0"
 BACKUP_DIR="/root/darnix-json-backups"
 SSH_DIR="/etc/ssh"
 USERS_DB="$SSH_DIR/.ssh.db"
