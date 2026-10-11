@@ -7,7 +7,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="4.2.0"
+VERSION="4.4.0"
 
 BACKUP_DIR="/root/darnix-json-backups"
 SSH_DIR="/etc/ssh"
@@ -1157,14 +1157,14 @@ main() {
         header
 
         echo "  ${GOLD}🌟 MENÚ PRINCIPAL${N}"
-        echo "  ${D}Administra cuentas SSH y HWID desde una sola copia.${N}"
+        echo "  ${D}Administra la copia de seguridad de cuentas SSH y HWID.${N}"
         echo
         line
 
         echo "  ${G}[1]${N} 💾 Crear copia de seguridad completa"
-        echo "  ${B}[2]${N} ♻️  Restaurar todas las cuentas desde backup"
+        echo "  ${B}[2]${N} ♻️ Restaurar todas las cuentas desde backup"
         echo "  ${C}[3]${N} 📚 Ver copias de seguridad disponibles"
-        echo "  ${R}[4]${N} 🗑️  Eliminar una copia de seguridad"
+        echo "  ${R}[4]${N} 🗑️ Eliminar una copia de seguridad"
         echo "  ${Y}[5]${N} 🩺 Diagnóstico del sistema"
         echo "  ${R}[0]${N} 🚪 Salir"
 
