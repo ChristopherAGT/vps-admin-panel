@@ -1,14 +1,13 @@
-
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════╗
-# ║       💎 DARNIX JSON BACKUP MANAGER PREMIUM 💎          ║
-# ║       Backup y restauración selectiva de cuentas SSH    ║
+# ║          💎 DARNIX BACKUP MANAGER PREMIUM 💎            ║
+# ║       Copias completas y restauración masiva SSH       ║
 # ╚══════════════════════════════════════════════════════════╝
 
 set -Eeuo pipefail
 umask 077
 
-VERSION="3.0.0"
+VERSION="4.0.0"
 BACKUP_DIR="/root/darnix-json-backups"
 SSH_DIR="/etc/ssh"
 USERS_DB="$SSH_DIR/.ssh.db"
@@ -40,21 +39,19 @@ fi
 # ───────────────────── 🧰 UTILIDADES ─────────────────────
 
 ok() {
-    printf "  ${G}╭─ ✔️  ÉXITO ──────────────────────────────────────╮${N}\n"
-    printf "  ${G}│${N}  %s\n" "$*"
-    printf "  ${G}╰───────────────────────────────────────────────────╯${N}\n"
+    printf "  ${G}✔️  %s${N}\n" "$*"
 }
 
 warn() {
-    printf "  ${GOLD}⚠️  ATENCIÓN:${N} %s\n" "$*"
+    printf "  ${GOLD}⚠️  %s${N}\n" "$*"
 }
 
 error() {
-    printf "  ${R}❌ ERROR:${N} %s\n" "$*" >&2
+    printf "  ${R}❌  %s${N}\n" "$*" >&2
 }
 
 info() {
-    printf "  ${C}➜ 🔹${N} %s\n" "$*"
+    printf "  ${C}➜ 🔹 %s${N}\n" "$*"
 }
 
 line() {
@@ -70,11 +67,11 @@ header() {
     clear 2>/dev/null || true
     echo
     echo "${M}╔══════════════════════════════════════════════════════╗${N}"
-    echo "${M}║${N}       ${GOLD}✨ DARNIX JSON BACKUP MANAGER ✨${N}           ${M}║${N}"
-    echo "${M}║${N}          ${P}💎 PREMIUM EDITION 💎${N}                   ${M}║${N}"
+    echo "${M}║${N}       ${GOLD}✨ DARNIX BACKUP MANAGER ✨${N}               ${M}║${N}"
+    echo "${M}║${N}             ${P}💎 PREMIUM EDITION 💎${N}               ${M}║${N}"
     echo "${M}╠══════════════════════════════════════════════════════╣${N}"
     printf "${M}║${N}  ${C}🛡️ Versión:${N} %-8s ${C}📦 Formato:${N} %-24s${M}║${N}\n" \
-        "$VERSION" "JSON individual"
+        "$VERSION" "TAR.GZ + JSON"
     echo "${M}╚══════════════════════════════════════════════════════╝${N}"
     echo
 }
@@ -85,15 +82,15 @@ die() {
 }
 
 require_root() {
-    [[ $EUID -eq 0 ]] || die "Ejecuta el panel como root."
+    [[ "$EUID" -eq 0 ]] || die "Ejecuta el panel como root."
 }
 
 require_commands() {
     local cmd
-    for cmd in python3 sshd getent useradd usermod chage \
-               install stat find sort awk grep date; do
+    for cmd in python3 tar gzip getent useradd usermod chage \
+               chpasswd sshd find sort awk grep date du; do
         command -v "$cmd" >/dev/null 2>&1 ||
-            die "Falta el comando necesario: $cmd"
+            die "Falta el comando requerido: $cmd"
     done
 }
 
@@ -109,122 +106,127 @@ init() {
     chmod 700 "$BACKUP_DIR"
 }
 
-valid_user() {
-    [[ "$1" =~ ^[a-zA-Z_][a-zA-Z0-9_.-]*[$]?$ ]]
-}
+# ───────────────────── 📦 CREAR BACKUP ─────────────────────
 
-darnix_expiry() {
-    awk -v u="$1" \
-        '$1=="###" && $2==u {d=$3} END {print d}' "$USERS_DB"
-}
-
-list_users() {
-    awk '$1=="###" && $2!="" {print $2}' "$USERS_DB" | sort -u
-}
-
-config_path() {
-    printf '%s/%s.conf' "$CONFIG_DIR" "$1"
-}
-
-banner_path() {
-    printf '%s/banner_%s.txt' "$BANNER_DIR" "$1"
-}
-
-# ───────────────────── 💾 CREAR JSON ─────────────────────
-
-backup_one() {
-    local u="$1"
-    local expiry stamp output
-
-    valid_user "$u" || {
-        error "Nombre de usuario inválido."
-        return 1
-    }
-
-    expiry="$(darnix_expiry "$u")"
-    [[ -n "$expiry" ]] || {
-        error "$u no figura en la base de usuarios Darnix."
-        return 1
-    }
-
-    getent passwd "$u" >/dev/null || {
-        error "No existe la cuenta Linux $u."
-        return 1
-    }
+create_backup() {
+    local stamp archive tmpdir jsonfile
 
     stamp="$(date '+%Y%m%d-%H%M%S')"
-    output="$BACKUP_DIR/${u}-${stamp}.json"
+    archive="$BACKUP_DIR/darnix-backup-${stamp}.tar.gz"
 
-    if ! python3 - "$u" "$expiry" "$output" \
-        "$SSH_DIR/$u" "$(config_path "$u")" "$(banner_path "$u")" \
-        "$USERS_DB" "$QUOTAS_DB" "$TRAFFIC_DB" <<'PY'
+    tmpdir="$(mktemp -d "$BACKUP_DIR/.work-XXXXXXXX")"
+    chmod 700 "$tmpdir"
+    jsonfile="$tmpdir/backup.json"
+
+    info "🔍 Recopilando todas las cuentas Darnix..."
+
+    if ! python3 - "$jsonfile" "$SSH_DIR" "$USERS_DB" \
+        "$QUOTAS_DB" "$TRAFFIC_DB" "$CONFIG_DIR" "$BANNER_DIR" <<'PY'
 import os
 import sys
 import json
-import base64
 import pwd
-import spwd
+import base64
 import datetime
+import re
 import tempfile
 
-(user, expiry, output, limit_path, config_path, banner_path,
- users_db, quotas_db, traffic_db) = sys.argv[1:]
+(output, ssh_dir, users_db, quotas_db, traffic_db,
+ config_dir, banner_dir) = sys.argv[1:]
 
 def read_json(path):
     with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, dict):
-        raise ValueError(f"Base JSON inválida: {path}")
-    return data
+        obj = json.load(f)
+    if not isinstance(obj, dict):
+        raise ValueError("Base JSON inválida: " + path)
+    return obj
 
-def encode_file(path):
+def read_file_b64(path):
     try:
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode("ascii")
     except FileNotFoundError:
         return None
 
-p = pwd.getpwnam(user)
-s = spwd.getspnam(user)
+def valid_user(u):
+    return isinstance(u, str) and bool(
+        re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.-]*[$]?", u)
+    )
+
+# Parsear shadow directamente, sin depender de spwd.
+shadow = {}
+with open("/etc/shadow", encoding="utf-8") as f:
+    for line in f:
+        fields = line.rstrip("\n").split(":")
+        if fields:
+            shadow[fields[0]] = fields[1:]
 
 with open(users_db, encoding="utf-8") as f:
-    records = [
-        line.rstrip("\n") for line in f
-        if line.split()[:2] == ["###", user]
-    ]
+    db_lines = f.readlines()
 
-if not records:
-    raise ValueError("No se encontró el registro Darnix.")
+users = {}
+for raw in db_lines:
+    fields = raw.strip().split()
+    if len(fields) >= 3 and fields[0] == "###":
+        user = fields[1]
+        if not valid_user(user):
+            raise ValueError("Usuario inválido en .ssh.db: " + user)
+        users.setdefault(user, []).append(raw.rstrip("\n"))
+
+if not users:
+    raise ValueError("No se encontraron cuentas Darnix en .ssh.db.")
 
 quotas = read_json(quotas_db)
 traffic = read_json(traffic_db)
 
-payload = {
-    "format": "darnix-account-backup",
-    "format_version": 3,
-    "created_utc": datetime.datetime.now(
-        datetime.timezone.utc
-    ).isoformat(),
-    "account": {
+accounts = []
+
+for user, records in sorted(users.items()):
+    try:
+        p = pwd.getpwnam(user)
+    except KeyError:
+        raise ValueError(
+            f"La cuenta {user} aparece en Darnix pero no existe en Linux. "
+            "Se cancela el backup para evitar una copia incompleta."
+        )
+
+    if user not in shadow:
+        raise ValueError("No se encontró el registro shadow de " + user)
+
+    sh = shadow[user]
+    sh += [""] * max(0, 8 - len(sh))
+
+    # Validar los registros Darnix y la fecha de vencimiento.
+    expiry = records[-1].split()[2]
+    datetime.date.fromisoformat(expiry)
+
+    account = {
         "username": user,
         "uid_original": p.pw_uid,
         "gid_original": p.pw_gid,
         "home_original": p.pw_dir,
         "shell_original": p.pw_shell,
         "darnix_expiry": expiry,
-        "shadow": {
-            "password_hash": s.sp_pwdp,
-            "last_change": s.sp_lstchg,
-            "min_days": s.sp_min,
-            "max_days": s.sp_max,
-            "warn_days": s.sp_warn,
-            "inactive_days": s.sp_inact,
-            "account_expiry_day": s.sp_expire
-        },
         "darnix_records": records,
-        "limit_file_b64": encode_file(limit_path),
-        "ssh_config_b64": encode_file(config_path),
-        "banner_b64": encode_file(banner_path),
+        "shadow": {
+            "password_hash": sh[0],
+            "last_change": sh[1],
+            "min_days": sh[2],
+            "max_days": sh[3],
+            "warn_days": sh[4],
+            "inactive_days": sh[5],
+            "account_expiry_day": sh[6],
+            "reserved": sh[7]
+        },
+        "limit_file_b64": read_file_b64(
+            os.path.join(ssh_dir, user)
+        ),
+        "ssh_config_b64": read_file_b64(
+            os.path.join(config_dir, user + ".conf")
+        ),
+        "banner_b64": read_file_b64(
+            os.path.join(banner_dir, "banner_" + user + ".txt")
+        ),
         "quota": {
             "exists": user in quotas,
             "value": quotas.get(user)
@@ -234,11 +236,20 @@ payload = {
             "value": traffic.get(user)
         }
     }
+    accounts.append(account)
+
+payload = {
+    "format": "darnix-full-backup",
+    "format_version": 4,
+    "created_utc": datetime.datetime.now(
+        datetime.timezone.utc
+    ).isoformat(),
+    "account_count": len(accounts),
+    "accounts": accounts
 }
 
 fd, tmp = tempfile.mkstemp(
-    prefix=".darnix-json-", suffix=".tmp",
-    dir=os.path.dirname(output)
+    prefix=".backup-json-", dir=os.path.dirname(output)
 )
 try:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -253,381 +264,475 @@ except Exception:
         pass
     raise
 
-print(output)
+print(len(accounts))
 PY
     then
-        error "No se pudo crear el JSON de $u."
+        rm -rf -- "$tmpdir"
+        error "No se pudo generar el JSON completo."
         return 1
     fi
 
-    chmod 600 "$output"
-    ok "Backup JSON creado: $u"
-    info "📄 Archivo: $output"
-    info "📏 Tamaño: $(du -h "$output" | awk '{print $1}')"
+    info "🗜️ Comprimiendo la copia completa..."
+
+    if ! tar -czf "$archive" -C "$tmpdir" backup.json; then
+        rm -rf -- "$tmpdir"
+        rm -f -- "$archive"
+        error "No se pudo crear el archivo comprimido."
+        return 1
+    fi
+
+    chmod 600 "$archive"
+    rm -rf -- "$tmpdir"
+
+    if ! tar -tzf "$archive" | grep -qx 'backup.json'; then
+        rm -f -- "$archive"
+        error "El archivo comprimido no pasó la verificación."
+        return 1
+    fi
+
+    ok "Copia de seguridad completa creada."
+    info "📦 Archivo: $archive"
+    info "📏 Tamaño: $(du -h "$archive" | awk '{print $1}')"
+    info "🔐 Permisos privados aplicados."
 }
 
-backup_menu() {
-    local u option
-    header
-    echo "${GOLD}💾 CREAR COPIA DE SEGURIDAD${N}"
-    line
-    echo "  ${G}[1]${N} 👤 Respaldar una cuenta"
-    echo "  ${G}[2]${N} 🗂️  Respaldar todas las cuentas"
-    echo "  ${R}[0]${N} ↩️  Volver"
-    echo
-    read -r -p "  ${GOLD}➤ Selecciona:${N} " option
+# ───────────────────── 🔎 VALIDAR Y EXTRAER ─────────────────────
 
-    case "$option" in
-        1)
-            echo
-            list_users
-            echo
-            read -r -p "  👤 Usuario: " u
-            backup_one "$u" || true
-            pause
-            ;;
-        2)
-            read -r -p "  ¿Respaldar todas las cuentas? [s/N]: " answer
-            if [[ "$answer" =~ ^[sS]$ ]]; then
-                while IFS= read -r u; do
-                    [[ -n "$u" ]] || continue
-                    echo
-                    info "Respaldando $u..."
-                    backup_one "$u" || true
-                done < <(list_users)
-                ok "Proceso finalizado."
-            else
-                info "Operación cancelada."
-            fi
-            pause
-            ;;
-        0) return ;;
-        *) warn "Opción inválida."; pause ;;
-    esac
-}
+extract_and_validate() {
+    local archive="$1"
+    local dest="$2"
 
-# ───────────────────── 🔎 VALIDAR JSON ─────────────────────
+    python3 - "$archive" "$dest" <<'PY'
+import sys
+import os
+import json
+import tarfile
+import re
+import base64
+import datetime
 
-validate_json() {
-    python3 - "$1" <<'PY'
-import json, sys, re, base64
+archive, dest = sys.argv[1:]
 
-with open(sys.argv[1], encoding="utf-8") as f:
-    d = json.load(f)
+def valid_user(u):
+    return isinstance(u, str) and bool(
+        re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.-]*[$]?", u)
+    )
 
-if d.get("format") != "darnix-account-backup":
-    raise SystemExit("Formato no reconocido.")
-if d.get("format_version") != 3:
-    raise SystemExit("Versión no compatible.")
+def check_date(s):
+    if not isinstance(s, str):
+        raise ValueError("Fecha inválida.")
+    datetime.date.fromisoformat(s)
 
-a = d.get("account")
-if not isinstance(a, dict):
-    raise SystemExit("Falta la sección account.")
+with tarfile.open(archive, "r:gz") as tf:
+    members = tf.getmembers()
 
-u = a.get("username", "")
-if not isinstance(u, str) or not re.fullmatch(
-    r"[a-zA-Z_][a-zA-Z0-9_.-]*[$]?", u
-):
-    raise SystemExit("Nombre de usuario inválido.")
+    # Aceptar exclusivamente un único archivo JSON regular.
+    if len(members) != 1:
+        raise ValueError("El archivo debe contener un único backup.json.")
 
-if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", a.get("darnix_expiry", "")):
-    raise SystemExit("Fecha de expiración inválida.")
+    m = members[0]
+    if m.name != "backup.json" or not m.isfile():
+        raise ValueError("Contenido del archivo no reconocido.")
+    if m.size > 200 * 1024 * 1024:
+        raise ValueError("El JSON supera el límite de 200 MiB.")
 
-s = a.get("shadow")
-if not isinstance(s, dict) or not s.get("password_hash"):
-    raise SystemExit("Falta el hash de contraseña.")
+    src = tf.extractfile(m)
+    if src is None:
+        raise ValueError("No se pudo leer el JSON.")
 
-for k in ("quota", "traffic"):
-    if not isinstance(a.get(k), dict) or "exists" not in a[k]:
-        raise SystemExit(f"Falta la sección {k}.")
+    raw = src.read()
+    with open(dest, "wb") as f:
+        f.write(raw)
+    os.chmod(dest, 0o600)
 
-for k in ("limit_file_b64", "ssh_config_b64", "banner_b64"):
-    value = a.get(k)
-    if value is not None:
-        if not isinstance(value, str):
-            raise SystemExit(f"Campo inválido: {k}")
-        base64.b64decode(value, validate=True)
+with open(dest, encoding="utf-8") as f:
+    data = json.load(f)
 
-print(u)
+if data.get("format") != "darnix-full-backup":
+    raise ValueError("Formato de backup no reconocido.")
+if data.get("format_version") != 4:
+    raise ValueError("Versión de backup incompatible.")
+
+accounts = data.get("accounts")
+if not isinstance(accounts, list) or not accounts:
+    raise ValueError("El backup no contiene cuentas.")
+
+if len(accounts) > 100000:
+    raise ValueError("Número de cuentas fuera de rango.")
+
+seen = set()
+
+for a in accounts:
+    if not isinstance(a, dict):
+        raise ValueError("Registro de cuenta inválido.")
+
+    u = a.get("username")
+    if not valid_user(u):
+        raise ValueError("Nombre de usuario inválido.")
+    if u in seen:
+        raise ValueError("Usuario duplicado: " + u)
+    seen.add(u)
+
+    check_date(a.get("darnix_expiry"))
+
+    records = a.get("darnix_records")
+    if not isinstance(records, list) or not records:
+        raise ValueError("Faltan registros Darnix para " + u)
+
+    for record in records:
+        parts = record.split()
+        if len(parts) != 3 or parts[0] != "###" or parts[1] != u:
+            raise ValueError("Registro Darnix incorrecto para " + u)
+        check_date(parts[2])
+
+    sh = a.get("shadow")
+    if not isinstance(sh, dict):
+        raise ValueError("Falta el hash de " + u)
+    if not isinstance(sh.get("password_hash"), str) or not sh["password_hash"]:
+        raise ValueError("Hash vacío o inválido para " + u)
+
+    for key in ("quota", "traffic"):
+        obj = a.get(key)
+        if not isinstance(obj, dict) or not isinstance(obj.get("exists"), bool):
+            raise ValueError("Campo incorrecto: " + key)
+        if obj["exists"] and "value" not in obj:
+            raise ValueError("Falta el valor de " + key)
+
+    for key in ("limit_file_b64", "ssh_config_b64", "banner_b64"):
+        value = a.get(key)
+        if value is not None:
+            if not isinstance(value, str):
+                raise ValueError("Archivo codificado inválido: " + key)
+            content = base64.b64decode(value, validate=True)
+
+            if key == "ssh_config_b64":
+                text = content.decode("utf-8")
+                lines = [x.strip() for x in text.splitlines() if x.strip()]
+                if not lines or lines[0] != "Match User " + u:
+                    raise ValueError("Config SSH no corresponde a " + u)
+                for line in lines[1:]:
+                    if line.lower().startswith(("include ", "match ")):
+                        raise ValueError("Directiva no permitida en config de " + u)
+
+print(len(accounts))
 PY
 }
 
-# ───────────────────── 🔐 RESPALDO PREVIO ─────────────────────
+# ───────────────────── 🧰 BACKUP PREVIO ─────────────────────
 
-create_prebackup() {
-    local u="$1"
-    if [[ -n "$(darnix_expiry "$u")" ]] &&
-       getent passwd "$u" >/dev/null 2>&1; then
-        backup_one "$u"
-    fi
+create_pre_restore_backup() {
+    info "🛡️ Creando automáticamente un backup previo..."
+    create_backup
 }
 
-# ───────────────────── ♻️ RESTAURAR CUENTA ─────────────────────
+# ───────────────────── ♻️ RESTAURAR TODO ─────────────────────
 
-restore_one() {
-    local file="$1"
-    local u expiry hash shell existing answer
-    local min_days max_days warn_days inactive_days acct_exp_day
-    local config_data
+restore_archive() {
+    local archive="$1"
+    local tmpdir jsonfile count
 
-    [[ -f "$file" ]] || {
-        error "No existe el archivo JSON."
+    tmpdir="$(mktemp -d "$BACKUP_DIR/.restore-XXXXXXXX")"
+    chmod 700 "$tmpdir"
+    jsonfile="$tmpdir/backup.json"
+
+    info "🔎 Validando el archivo seleccionado..."
+
+    if ! count="$(extract_and_validate "$archive" "$jsonfile")"; then
+        rm -rf -- "$tmpdir"
+        error "El backup no pasó la validación. No se restauró nada."
         return 1
-    }
-
-    if ! u="$(validate_json "$file")"; then
-        error "El JSON no pasó la validación."
-        return 1
     fi
 
-    echo
-    line
-    echo "${GOLD}♻️  RESTAURACIÓN DE CUENTA${N}"
-    line
-    echo "  👤 Usuario: ${C}$u${N}"
-    echo "  📄 Archivo: $file"
-    echo
-
-    existing=0
-    if getent passwd "$u" >/dev/null 2>&1; then
-        existing=1
-        if [[ -z "$(darnix_expiry "$u")" ]]; then
-            error "El usuario existe en Linux, pero no figura en Darnix."
-            warn "Se cancela para proteger la cuenta existente."
-            return 1
-        fi
-
-        warn "La cuenta ya existe y sus datos serán actualizados."
-        read -r -p "  ¿Crear backup previo? [S/n]: " answer
-        if [[ ! "$answer" =~ ^[nN]$ ]]; then
-            create_prebackup "$u" || {
-                error "No se pudo crear el backup previo."
-                return 1
-            }
-        else
-            warn "Has elegido continuar sin backup previo."
-            read -r -p "  Escribe CONTINUAR: " answer
-            [[ "$answer" == "CONTINUAR" ]] || return 1
-        fi
-    fi
-
-    read -r -p "  Escribe RESTAURAR para confirmar: " answer
-    [[ "$answer" == "RESTAURAR" ]] || {
-        info "Restauración cancelada."
-        return 0
-    }
-
-    # Leer valores escalares del JSON.
-    local fields
-    fields="$(python3 - "$file" <<'PY'
-import json, sys
-a=json.load(open(sys.argv[1], encoding="utf-8"))["account"]
-s=a["shadow"]
-def val(x):
-    return "-" if x is None else str(x)
-for x in (
-    a["darnix_expiry"], s["password_hash"],
-    s.get("min_days"), s.get("max_days"), s.get("warn_days"),
-    s.get("inactive_days"), s.get("account_expiry_day"),
-    a.get("shell_original", "/bin/false")
-):
-    print(val(x))
-PY
-)" || return 1
-
-    local arr=()
-    mapfile -t arr <<< "$fields"
-    expiry="${arr[0]}"
-    hash="${arr[1]}"
-    min_days="${arr[2]}"
-    max_days="${arr[3]}"
-    warn_days="${arr[4]}"
-    inactive_days="${arr[5]}"
-    acct_exp_day="${arr[6]}"
-    shell="${arr[7]}"
-
-    # No permitir una shell interactiva en cuentas SSH Darnix.
-    case "$shell" in
-        /bin/false|/usr/sbin/nologin) ;;
-        *) shell="/bin/false" ;;
-    esac
-
-    if ((existing == 0)); then
-        useradd -M -s "$shell" "$u" || {
-            error "No se pudo crear la cuenta Linux."
-            return 1
-        }
-    fi
-
-    # Aplicar únicamente el hash cifrado.
-    printf '%s:%s\n' "$u" "$hash" | chpasswd -e || {
-        error "No se pudo aplicar el hash de contraseña."
+    ok "Backup válido: $count cuentas."
+    create_pre_restore_backup || {
+        rm -rf -- "$tmpdir"
+        error "No se pudo crear el backup previo. Restauración cancelada."
         return 1
     }
 
-    usermod -s "$shell" "$u"
+    info "♻️ Restaurando todas las cuentas del archivo..."
 
-    [[ "$min_days" == "-" ]] || chage -m "$min_days" "$u"
-    [[ "$max_days" == "-" ]] || chage -M "$max_days" "$u"
-    [[ "$warn_days" == "-" ]] || chage -W "$warn_days" "$u"
-    [[ "$inactive_days" == "-" ]] || chage -I "$inactive_days" "$u"
+    if ! python3 - "$jsonfile" "$SSH_DIR" "$USERS_DB" \
+        "$QUOTAS_DB" "$TRAFFIC_DB" "$CONFIG_DIR" "$BANNER_DIR" <<'PY'
+import os
+import sys
+import json
+import base64
+import tempfile
+import subprocess
+import datetime
 
-    # La fecha de expiración Linux se conserva independientemente
-    # de la fecha de vencimiento registrada en Darnix.
-    if [[ "$acct_exp_day" == "-" ]]; then
-        chage -E -1 "$u"
-    elif [[ "$acct_exp_day" == "0" ]]; then
-        chage -E 0 "$u"
-    else
-        local linux_expiry
-        linux_expiry="$(python3 - "$acct_exp_day" <<'PY'
-import datetime, sys
-n=int(sys.argv[1])
-print((datetime.date(1970,1,1)+datetime.timedelta(days=n)).isoformat())
-PY
-)" || return 1
-        chage -E "$linux_expiry" "$u"
-    fi
+(json_path, ssh_dir, users_db, quotas_db, traffic_db,
+ config_dir, banner_dir) = sys.argv[1:]
 
-    # Actualizar exclusivamente el registro Darnix seleccionado.
-    python3 - "$USERS_DB" "$u" "$expiry" <<'PY'
-import os, sys, tempfile
-path, user, expiry = sys.argv[1:]
-with open(path, encoding="utf-8") as f:
-    lines=f.readlines()
-lines=[x for x in lines if x.split()[:2] != ["###", user]]
-lines.append(f"### {user} {expiry}\n")
-fd,tmp=tempfile.mkstemp(prefix=".darnix-users-",dir=os.path.dirname(path))
-try:
-    with os.fdopen(fd,"w",encoding="utf-8") as f:
-        f.writelines(lines)
-    os.chmod(tmp,os.stat(path).st_mode & 0o777)
-    os.chown(tmp,0,0)
-    os.replace(tmp,path)
-except Exception:
-    try: os.unlink(tmp)
-    except OSError: pass
-    raise
-PY
+with open(json_path, encoding="utf-8") as f:
+    data = json.load(f)
 
-    # Restaurar archivos individuales con rutas fijas y seguras.
-    python3 - "$file" "$SSH_DIR" "$CONFIG_DIR" "$BANNER_DIR" "$u" <<'PY'
-import json, sys, os, base64, tempfile
+accounts = data["accounts"]
+users_to_restore = {a["username"] for a in accounts}
 
-backup, ssh, cfgdir, bdir, user = sys.argv[1:]
-a=json.load(open(backup,encoding="utf-8"))["account"]
-os.makedirs(cfgdir,exist_ok=True)
-os.makedirs(bdir,exist_ok=True)
+def atomic_write(path, content, mode=None):
+    parent = os.path.dirname(path)
+    os.makedirs(parent, exist_ok=True)
 
-items=[
-    (a.get("limit_file_b64"),os.path.join(ssh,user),0o600),
-    (a.get("ssh_config_b64"),os.path.join(cfgdir,user+".conf"),0o644),
-    (a.get("banner_b64"),os.path.join(bdir,"banner_"+user+".txt"),0o644),
-]
-
-for encoded,dest,mode in items:
-    if encoded is None:
-        try: os.unlink(dest)
-        except FileNotFoundError: pass
-        continue
-
-    content=base64.b64decode(encoded,validate=True)
-
-    # La configuración debe ser estrictamente individual.
-    if dest.endswith(".conf"):
-        text=content.decode("utf-8")
-        lines=[x.strip() for x in text.splitlines() if x.strip()]
-        if not lines or lines[0] != "Match User " + user:
-            raise ValueError("La configuración SSH no corresponde al usuario.")
-        if any(x.lower().startswith(("include ", "match " ))
-               for x in lines[1:]):
-            raise ValueError("La configuración individual contiene directivas no permitidas.")
-
-    fd,tmp=tempfile.mkstemp(prefix=".darnix-file-",dir=os.path.dirname(dest))
+    old_stat = None
     try:
-        with os.fdopen(fd,"wb") as f:
+        old_stat = os.stat(path)
+    except FileNotFoundError:
+        pass
+
+    fd, tmp = tempfile.mkstemp(prefix=".darnix-restore-", dir=parent)
+    try:
+        with os.fdopen(fd, "wb") as f:
             f.write(content)
-        os.chmod(tmp,mode)
-        os.chown(tmp,0,0)
-        os.replace(tmp,dest)
+
+        if mode is not None:
+            os.chmod(tmp, mode)
+        elif old_stat is not None:
+            os.chmod(tmp, old_stat.st_mode & 0o777)
+        else:
+            os.chmod(tmp, 0o644)
+
+        os.chown(tmp, 0, 0)
+        os.replace(tmp, path)
     except Exception:
-        try: os.unlink(tmp)
-        except OSError: pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
         raise
-PY
 
-    # Fusionar cuota y tráfico, sin sustituir otros usuarios.
-    python3 - "$file" "$QUOTAS_DB" "$TRAFFIC_DB" "$u" <<'PY'
-import json, sys, os, tempfile
+def read_json(path):
+    with open(path, encoding="utf-8") as f:
+        obj = json.load(f)
+    if not isinstance(obj, dict):
+        raise ValueError("Base JSON inválida: " + path)
+    return obj
 
-backup,qpath,tpath,user=sys.argv[1:]
-a=json.load(open(backup,encoding="utf-8"))["account"]
+def write_json(path, obj):
+    atomic_write(
+        path,
+        (json.dumps(obj, ensure_ascii=False, indent=2) + "\n").encode(),
+        None
+    )
 
-for path,key in ((qpath,"quota"),(tpath,"traffic")):
-    with open(path,encoding="utf-8") as f:
-        db=json.load(f)
-    if not isinstance(db,dict):
-        raise ValueError("Base JSON inválida: "+path)
+def decode(value):
+    return None if value is None else base64.b64decode(value, validate=True)
 
-    item=a[key]
-    if item["exists"]:
-        db[user]=item.get("value")
-    else:
-        db.pop(user,None)
+def run(args):
+    subprocess.run(args, check=True)
 
-    fd,tmp=tempfile.mkstemp(prefix=".darnix-db-",dir=os.path.dirname(path))
+# Crear usuarios Linux que no existan.
+for a in accounts:
+    u = a["username"]
     try:
-        with os.fdopen(fd,"w",encoding="utf-8") as f:
-            json.dump(db,f,ensure_ascii=False,indent=2)
-            f.write("\n")
-        os.chmod(tmp,os.stat(path).st_mode & 0o777)
-        os.chown(tmp,0,0)
-        os.replace(tmp,path)
-    except Exception:
-        try: os.unlink(tmp)
-        except OSError: pass
-        raise
-PY
+        import pwd
+        pwd.getpwnam(u)
+        exists = True
+    except KeyError:
+        exists = False
 
-    if ! sshd -t; then
-        error "sshd -t falló después de la restauración."
-        warn "No se recargó SSH. Revisa el backup previo antes de continuar."
+    if not exists:
+        run(["useradd", "-M", "-s", "/bin/false", u])
+
+# Aplicar hashes y propiedades de cuentas.
+for a in accounts:
+    u = a["username"]
+    sh = a["shadow"]
+
+    # Las cuentas Darnix deben mantener una shell no interactiva.
+    original_shell = a.get("shell_original", "/bin/false")
+    shell = original_shell if original_shell in (
+        "/bin/false", "/usr/sbin/nologin"
+    ) else "/bin/false"
+
+    run(["usermod", "-s", shell, u])
+    run(["chpasswd", "-e"], input=None) if False else None
+    subprocess.run(
+        ["chpasswd", "-e"],
+        input=f'{u}:{sh["password_hash"]}\n',
+        text=True,
+        check=True
+    )
+
+    # Restaurar envejecimiento de contraseña y expiración Linux.
+    aging = (
+        ("min_days", "-m"),
+        ("max_days", "-M"),
+        ("warn_days", "-W"),
+        ("inactive_days", "-I"),
+        ("last_change", "-d"),
+    )
+
+    for field, flag in aging:
+        value = sh.get(field)
+        if value is None or value == "":
+            continue
+        try:
+            number = int(value)
+        except (ValueError, TypeError):
+            raise ValueError(f"Valor shadow inválido para {u}: {field}")
+        run(["chage", flag, str(number), u])
+
+    exp = sh.get("account_expiry_day")
+    if exp is None or exp == "":
+        run(["chage", "-E", "-1", u])
+    else:
+        try:
+            exp_days = int(exp)
+        except (ValueError, TypeError):
+            raise ValueError("Expiración Linux inválida para " + u)
+
+        if exp_days < 0:
+            run(["chage", "-E", "-1", u])
+        else:
+            exp_date = (
+                datetime.date(1970, 1, 1)
+                + datetime.timedelta(days=exp_days)
+            ).isoformat()
+            run(["chage", "-E", exp_date, u])
+
+# Fusionar .ssh.db: conservar las cuentas que no están en el backup.
+with open(users_db, encoding="utf-8") as f:
+    old_lines = f.readlines()
+
+new_lines = []
+for line in old_lines:
+    fields = line.strip().split()
+    if len(fields) >= 2 and fields[0] == "###" and fields[1] in users_to_restore:
+        continue
+    new_lines.append(line)
+
+for a in accounts:
+    new_lines.extend(record + "\n" for record in a["darnix_records"])
+
+atomic_write(users_db, "".join(new_lines).encode())
+
+# Restaurar archivos individuales de cada cuenta.
+os.makedirs(config_dir, exist_ok=True)
+os.makedirs(banner_dir, exist_ok=True)
+
+for a in accounts:
+    u = a["username"]
+
+    files = (
+        (a.get("limit_file_b64"), os.path.join(ssh_dir, u), 0o600),
+        (a.get("ssh_config_b64"), os.path.join(config_dir, u + ".conf"), 0o644),
+        (a.get("banner_b64"), os.path.join(banner_dir, "banner_" + u + ".txt"), 0o644),
+    )
+
+    for encoded, path, mode in files:
+        content = decode(encoded)
+        if content is None:
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+        else:
+            atomic_write(path, content, mode)
+
+# Fusionar cuota y tráfico; no reemplazar datos de otros usuarios.
+quotas = read_json(quotas_db)
+traffic = read_json(traffic_db)
+
+for a in accounts:
+    u = a["username"]
+    for db, key in ((quotas, "quota"), (traffic, "traffic")):
+        item = a[key]
+        if item["exists"]:
+            db[u] = item.get("value")
+        else:
+            db.pop(u, None)
+
+write_json(quotas_db, quotas)
+write_json(traffic_db, traffic)
+
+print(f"Restauración de datos completada para {len(accounts)} cuentas.")
+PY
+    then
+        rm -rf -- "$tmpdir"
+        error "La restauración encontró un error."
+        warn "Se creó un backup previo; revisa ese archivo antes de reintentar."
         return 1
     fi
 
-    ok "Cuenta $u restaurada."
-    ok "Hash, vencimiento, límite, cuota y tráfico procesados."
-    ok "Configuración SSH validada."
-    info "No se reinició ni recargó SSH."
-    warn "Prueba una conexión antes de dar la restauración por finalizada."
+    rm -rf -- "$tmpdir"
+
+    info "🧪 Comprobando la configuración de SSH..."
+    if sshd -t; then
+        ok "Configuración SSH válida."
+    else
+        error "sshd -t detectó errores."
+        warn "No se recargó ni reinició SSH."
+        warn "Revisa los archivos restaurados y el backup previo."
+        return 1
+    fi
+
+    line
+    ok "¡Restauración masiva completada!"
+    info "👥 Cuentas procesadas: $count"
+    info "🛡️ Se conservaron las entradas de otros usuarios."
+    info "🔐 Se fusionaron las bases de cuotas y tráfico."
+    info "⚙️ SSH no se recargó automáticamente."
 }
 
-restore_menu() {
-    local files=() i=1 choice
+# ───────────────────── 📚 LISTAR BACKUPS ─────────────────────
+
+list_backups() {
+    header
+    echo "${GOLD}📚 COPIAS DE SEGURIDAD DISPONIBLES${N}"
+    line
+
+    local files=()
     mapfile -t files < <(
-        find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.json' -printf '%f\n' |
-        sort
+        find "$BACKUP_DIR" -maxdepth 1 -type f \
+            -name 'darnix-backup-*.tar.gz' -printf '%f\n' | sort
+    )
+
+    if ((${#files[@]} == 0)); then
+        warn "No hay copias de seguridad guardadas."
+    else
+        local f
+        for f in "${files[@]}"; do
+            printf "  ${G}📦${N} %-42s ${Y}%s${N}\n" \
+                "$f" "$(du -h "$BACKUP_DIR/$f" | awk '{print $1}')"
+        done
+        echo
+        info "Total de copias: ${#files[@]}"
+    fi
+
+    pause
+}
+
+# ───────────────────── 🗑️ ELIMINAR BACKUP ─────────────────────
+
+delete_backup() {
+    local files=() i=1 choice file answer
+
+    mapfile -t files < <(
+        find "$BACKUP_DIR" -maxdepth 1 -type f \
+            -name 'darnix-backup-*.tar.gz' -printf '%f\n' | sort
     )
 
     header
-    echo "${GOLD}♻️  RESTAURAR DESDE JSON${N}"
+    echo "${R}🗑️ ELIMINAR UNA COPIA DE SEGURIDAD${N}"
     line
 
     if ((${#files[@]} == 0)); then
-        warn "No hay backups JSON disponibles."
+        warn "No hay copias para eliminar."
         pause
         return
     fi
 
-    local f
-    for f in "${files[@]}"; do
-        printf "  ${C}%2d)${N} 📄 %s\n" "$i" "$f"
+    for file in "${files[@]}"; do
+        printf "  ${C}%2d)${N} 📦 %s\n" "$i" "$file"
         ((i+=1))
     done
 
     echo
-    echo "  ${R} 0)${N} ↩️ Volver"
-    read -r -p "  ➤ Selecciona un archivo: " choice
+    echo "  ${R}0)${N} ↩️ Volver"
+    echo
+    read -r -p "  ${GOLD}➤ Selecciona el backup:${N} " choice
 
     [[ "$choice" =~ ^[0-9]+$ ]] || {
         warn "Selección inválida."
@@ -636,123 +741,25 @@ restore_menu() {
     }
 
     ((choice == 0)) && return
+
     ((choice >= 1 && choice <= ${#files[@]})) || {
-        warn "Selección fuera de rango."
-        pause
-        return
-    }
-
-    restore_one "$BACKUP_DIR/${files[$((choice-1))]}" || true
-    pause
-}
-
-# ───────────────────── 📚 LISTAR BACKUPS ─────────────────────
-
-list_backups() {
-    header
-    echo "${GOLD}📚 BACKUPS JSON GUARDADOS${N}"
-    line
-
-    local files=()
-    mapfile -t files < <(
-        find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.json' -printf '%f\n' |
-        sort
-    )
-
-    if ((${#files[@]} == 0)); then
-        warn "Todavía no hay backups."
-    else
-        local f
-        for f in "${files[@]}"; do
-            printf "  ${G}📄${N} %-48s ${Y}%s${N}\n" \
-                "$f" "$(du -h "$BACKUP_DIR/$f" | awk '{print $1}')"
-        done
-    fi
-
-    echo
-    info "Ubicación: $BACKUP_DIR"
-    pause
-}
-
-# ───────────────────── 🗑️ ELIMINAR BACKUP ─────────────────────
-
-delete_backup() {
-    local files=() i=1 choice file confirm
-
-    mapfile -t files < <(
-        find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.json' -printf '%f\n' |
-        sort
-    )
-
-    header
-    echo "${R}🗑️  ELIMINAR BACKUP${N}"
-    line
-
-    if ((${#files[@]} == 0)); then
-        warn "No hay backups para eliminar."
-        pause
-        return
-    fi
-
-    for file in "${files[@]}"; do
-        printf "  ${C}%2d)${N} 📄 %s\n" "$i" "$file"
-        ((i+=1))
-    done
-
-    echo
-    echo "  0) ↩️ Volver"
-    read -r -p "  ➤ Selecciona: " choice
-
-    [[ "$choice" =~ ^[0-9]+$ ]] || {
-        warn "Opción inválida."
-        pause
-        return
-    }
-
-    ((choice == 0)) && return
-    ((choice >= 1 && choice <= ${#files[@]})) || {
-        warn "Selección fuera de rango."
+        warn "Opción fuera de rango."
         pause
         return
     }
 
     file="${files[$((choice-1))]}"
-    echo
-    warn "Se eliminará permanentemente $file"
-    read -r -p "  Escribe ELIMINAR para confirmar: " confirm
 
-    if [[ "$confirm" == "ELIMINAR" ]]; then
+    echo
+    warn "Se eliminará: $file"
+    read -r -p "  Escribe ELIMINAR para confirmar: " answer
+
+    if [[ "$answer" == "ELIMINAR" ]]; then
         rm -f -- "$BACKUP_DIR/$file"
         ok "Backup eliminado."
     else
         info "Operación cancelada."
     fi
-    pause
-}
-
-# ───────────────────── 👥 LISTAR CUENTAS ─────────────────────
-
-show_users() {
-    header
-    echo "${GOLD}👥 CUENTAS DARNIX${N}"
-    line
-    printf "  ${W}%-22s %-16s %-12s${N}\n" "USUARIO" "ESTADO LINUX" "VENCE"
-    echo "  ----------------------------------------------------"
-
-    local u state
-    while IFS= read -r u; do
-        [[ -n "$u" ]] || continue
-
-        if getent passwd "$u" >/dev/null 2>&1; then
-            state="${G}✔ Existe${N}"
-        else
-            state="${R}✘ Falta${N}"
-        fi
-
-        printf "  %-22s " "$u"
-        printf "%b " "$state"
-        printf "%-12s\n" "$(darnix_expiry "$u")"
-    done < <(list_users)
 
     pause
 }
@@ -766,86 +773,113 @@ diagnostics() {
 
     local f
     for f in "$USERS_DB" "$QUOTAS_DB" "$TRAFFIC_DB"; do
-        [[ -f "$f" ]] && ok "Encontrado: $f" || error "Falta: $f"
+        if [[ -f "$f" ]]; then
+            ok "Encontrado: $f"
+        else
+            error "Falta: $f"
+        fi
     done
 
-    python3 --version
     echo
+    python3 --version
+    info "Directorio: $BACKUP_DIR"
+    info "Permisos del directorio: $(stat -c '%a' "$BACKUP_DIR")"
 
+    echo
     if sshd -t; then
         ok "Configuración SSH válida."
     else
-        error "La configuración SSH no es válida."
+        error "La configuración SSH contiene errores."
     fi
 
-    echo
-    info "Los JSON se guardan con permisos 600."
-    info "El directorio se protege con permisos 700."
     pause
 }
 
 # ───────────────────── 🌟 MENÚ PRINCIPAL ─────────────────────
 
 main() {
+    local option archive files=() i choice
+
     while true; do
         header
-        echo "  ${GOLD}🌟 PANEL PRINCIPAL${N}"
-        echo "  ${D}Administra tus cuentas SSH de forma selectiva.${N}"
+        echo "  ${GOLD}🌟 MENÚ PRINCIPAL${N}"
+        echo "  ${D}Administra todas las cuentas desde una sola copia.${N}"
         echo
         line
-        echo "  ${W}💾 COPIAS DE SEGURIDAD${N}"
-        echo "  ${G}[1]${N} 💎 Crear backup de una cuenta"
-        echo "  ${G}[2]${N} 🗂️  Respaldar TODAS las cuentas"
+        echo "  ${G}[1]${N} 💾 Crear copia de seguridad completa"
+        echo "  ${B}[2]${N} ♻️  Restaurar todas las cuentas desde backup"
+        echo "  ${C}[3]${N} 📚 Ver copias de seguridad disponibles"
+        echo "  ${R}[4]${N} 🗑️  Eliminar una copia de seguridad"
+        echo "  ${Y}[5]${N} 🩺 Diagnóstico del sistema"
+        echo "  ${R}[0]${N} 🚪 Salir"
         echo
         line
-        echo "  ${W}♻️  RESTAURACIÓN${N}"
-        echo "  ${B}[3]${N} 🔄 Restaurar cuenta desde JSON"
-        echo
-        line
-        echo "  ${W}👥 ADMINISTRACIÓN${N}"
-        echo "  ${C}[4]${N} 👤 Ver cuentas Darnix"
-        echo "  ${C}[5]${N} 📚 Ver backups guardados"
-        echo "  ${R}[6]${N} 🗑️  Eliminar un backup"
-        echo "  ${Y}[7]${N} 🩺 Diagnóstico del sistema"
-        echo
-        line
-        echo "  ${R}[0]${N} 🚪 Salir del panel"
         echo
         read -r -p "  ${GOLD}➤ Selecciona una opción:${N} " option
 
         case "$option" in
-            1) backup_menu ;;
-            2)
-                read -r -p "  ¿Respaldar todas las cuentas? [s/N]: " yes
-                if [[ "$yes" =~ ^[sS]$ ]]; then
-                    while IFS= read -r u; do
-                        [[ -n "$u" ]] || continue
-                        echo
-                        info "Respaldando $u..."
-                        backup_one "$u" || true
-                    done < <(list_users)
-                    ok "Proceso de backup finalizado."
-                else
-                    info "Operación cancelada."
-                fi
+            1)
+                echo
+                create_backup || true
                 pause
                 ;;
-            3) restore_menu ;;
-            4) show_users ;;
-            5) list_backups ;;
-            6) delete_backup ;;
-            7) diagnostics ;;
+            2)
+                mapfile -t files < <(
+                    find "$BACKUP_DIR" -maxdepth 1 -type f \
+                        -name 'darnix-backup-*.tar.gz' -printf '%f\n' |
+                        sort
+                )
+
+                header
+                echo "${GOLD}♻️ RESTAURAR TODAS LAS CUENTAS${N}"
+                line
+
+                if ((${#files[@]} == 0)); then
+                    warn "No hay copias de seguridad disponibles."
+                    pause
+                    continue
+                fi
+
+                i=1
+                for archive in "${files[@]}"; do
+                    printf "  ${C}%2d)${N} 📦 %s\n" "$i" "$archive"
+                    ((i+=1))
+                done
+
+                echo
+                echo "  ${R}0)${N} ↩️ Volver"
+                echo
+                read -r -p "  ${GOLD}➤ Selecciona el backup:${N} " choice
+
+                [[ "$choice" =~ ^[0-9]+$ ]] || {
+                    warn "Selección inválida."
+                    pause
+                    continue
+                }
+
+                ((choice == 0)) && continue
+
+                ((choice >= 1 && choice <= ${#files[@]})) || {
+                    warn "Opción fuera de rango."
+                    pause
+                    continue
+                }
+
+                # Sin confirmación adicional: se ejecuta al elegir el archivo.
+                restore_archive "$BACKUP_DIR/${files[$((choice-1))]}" || true
+                pause
+                ;;
+            3) list_backups ;;
+            4) delete_backup ;;
+            5) diagnostics ;;
             0)
                 echo
-                line
                 echo "  ${P}👋 ¡Gracias por utilizar Darnix Premium!${N}"
-                echo "  ${D}🔐 Tus cuentas, tus respaldos, tu control.${N}"
-                line
                 echo
                 exit 0
                 ;;
             *)
-                warn "Opción inválida. Selecciona un número del menú."
+                warn "Opción inválida."
                 sleep 1
                 ;;
         esac
