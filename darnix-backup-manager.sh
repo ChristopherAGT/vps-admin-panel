@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════╗
 # ║          💎 DARNIX BACKUP MANAGER PREMIUM 💎             ║
@@ -36,15 +35,16 @@ info()  { printf "  ${C}➜ 🔹 %s${N}\n" "$*"; }
 line()  { printf "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}\n"; }
 pause() { echo; read -r -p "  ${GOLD}💡 Presiona ENTER para continuar...${N} " _; }
 
+
 header() {
     clear 2>/dev/null || true
     echo
-    echo "${B}╔══════════════════════════════════════════════════════╗${N}"
-    echo "${B}║${N}       ${C}⚡ DARNIX BACKUP MANAGER ⚡${N}                ${B}║${N}"
-    echo "${B}║${N}             ${GOLD}💎 PREMIUM EDITION 💎${N}               ${B}║${N}"
-    echo "${B}╠══════════════════════════════════════════════════════╣${N}"
-    printf "${B}║${N}  ${C}🛡️ Versión:${N} %-8s ${C}📦 Formato:${N} %-24s${B}║${N}\n" "$VERSION" "TAR.GZ + JSON"
-    echo "${B}╚══════════════════════════════════════════════════════╝${N}"
+    printf "${B}╔══════════════════════════════════════════════════════╗${N}\n"
+    printf "${B}║${N}       ${C}⚡ DARNIX BACKUP MANAGER ⚡${N}                ${B}║${N}\n"
+    printf "${B}║${N}             ${GOLD}💎 PREMIUM EDITION 💎${N}               ${B}║${N}\n"
+    printf "${B}╠══════════════════════════════════════════════════════╣${N}\n"
+    printf "${B}║${N} 🛡️ ${C}Versión:${N} ${W}%-8s${N}  📦 ${C}Formato:${N} ${W}TAR.GZ + JSON${N}       ${B}║${N}\n" "$VERSION"
+    printf "${B}╚══════════════════════════════════════════════════════╝${N}\n"
     echo
 }
 
