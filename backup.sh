@@ -7,7 +7,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="4.0.0"
+VERSION="4.1.0"
 BACKUP_DIR="/root/darnix-json-backups"
 SSH_DIR="/etc/ssh"
 USERS_DB="$SSH_DIR/.ssh.db"
@@ -88,7 +88,8 @@ require_root() {
 require_commands() {
     local cmd
     for cmd in python3 tar gzip getent useradd usermod chage \
-               chpasswd sshd find sort awk grep date du; do
+               chpasswd sshd find sort awk grep date du stat \
+               mktemp chmod mv; do
         command -v "$cmd" >/dev/null 2>&1 ||
             die "Falta el comando requerido: $cmd"
     done
@@ -106,13 +107,19 @@ init() {
     chmod 700 "$BACKUP_DIR"
 }
 
-# ───────────────────── 📦 CREAR BACKUP ─────────────────────
+# ───────────────────── 📦 CREAR BACKUP NORMAL ─────────────────────
 
 create_backup() {
-    local stamp archive tmpdir jsonfile
+    local stamp archive tmpdir jsonfile count
 
     stamp="$(date '+%Y%m%d-%H%M%S')"
     archive="$BACKUP_DIR/darnix-backup-${stamp}.tar.gz"
+
+    # Evitar sobrescribir una copia con el mismo nombre.
+    [[ ! -e "$archive" ]] || {
+        error "Ya existe un backup con ese nombre."
+        return 1
+    }
 
     tmpdir="$(mktemp -d "$BACKUP_DIR/.work-XXXXXXXX")"
     chmod 700 "$tmpdir"
@@ -120,7 +127,7 @@ create_backup() {
 
     info "🔍 Recopilando todas las cuentas Darnix..."
 
-    if ! python3 - "$jsonfile" "$SSH_DIR" "$USERS_DB" \
+    if ! count="$(python3 - "$jsonfile" "$SSH_DIR" "$USERS_DB" \
         "$QUOTAS_DB" "$TRAFFIC_DB" "$CONFIG_DIR" "$BANNER_DIR" <<'PY'
 import os
 import sys
@@ -153,12 +160,11 @@ def valid_user(u):
         re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.-]*[$]?", u)
     )
 
-# Parsear shadow directamente, sin depender de spwd.
 shadow = {}
 with open("/etc/shadow", encoding="utf-8") as f:
     for line in f:
         fields = line.rstrip("\n").split(":")
-        if fields:
+        if len(fields) >= 2:
             shadow[fields[0]] = fields[1:]
 
 with open(users_db, encoding="utf-8") as f:
@@ -174,11 +180,13 @@ for raw in db_lines:
         users.setdefault(user, []).append(raw.rstrip("\n"))
 
 if not users:
-    raise ValueError("No se encontraron cuentas Darnix en .ssh.db.")
+    raise ValueError(
+        "No se encontraron cuentas Darnix en .ssh.db. "
+        "No se creó un backup normal."
+    )
 
 quotas = read_json(quotas_db)
 traffic = read_json(traffic_db)
-
 accounts = []
 
 for user, records in sorted(users.items()):
@@ -186,19 +194,17 @@ for user, records in sorted(users.items()):
         p = pwd.getpwnam(user)
     except KeyError:
         raise ValueError(
-            f"La cuenta {user} aparece en Darnix pero no existe en Linux. "
-            "Se cancela el backup para evitar una copia incompleta."
+            f"La cuenta {user} aparece en Darnix pero no existe en Linux."
         )
 
     if user not in shadow:
         raise ValueError("No se encontró el registro shadow de " + user)
 
-    sh = shadow[user]
-    sh += [""] * max(0, 8 - len(sh))
-
-    # Validar los registros Darnix y la fecha de vencimiento.
     expiry = records[-1].split()[2]
     datetime.date.fromisoformat(expiry)
+
+    sh = shadow[user]
+    sh += [""] * max(0, 8 - len(sh))
 
     account = {
         "username": user,
@@ -218,9 +224,7 @@ for user, records in sorted(users.items()):
             "account_expiry_day": sh[6],
             "reserved": sh[7]
         },
-        "limit_file_b64": read_file_b64(
-            os.path.join(ssh_dir, user)
-        ),
+        "limit_file_b64": read_file_b64(os.path.join(ssh_dir, user)),
         "ssh_config_b64": read_file_b64(
             os.path.join(config_dir, user + ".conf")
         ),
@@ -266,7 +270,7 @@ except Exception:
 
 print(len(accounts))
 PY
-    then
+    )"; then
         rm -rf -- "$tmpdir"
         error "No se pudo generar el JSON completo."
         return 1
@@ -291,6 +295,7 @@ PY
     fi
 
     ok "Copia de seguridad completa creada."
+    info "👥 Cuentas guardadas: $count"
     info "📦 Archivo: $archive"
     info "📏 Tamaño: $(du -h "$archive" | awk '{print $1}')"
     info "🔐 Permisos privados aplicados."
@@ -326,7 +331,6 @@ def check_date(s):
 with tarfile.open(archive, "r:gz") as tf:
     members = tf.getmembers()
 
-    # Aceptar exclusivamente un único archivo JSON regular.
     if len(members) != 1:
         raise ValueError("El archivo debe contener un único backup.json.")
 
@@ -356,7 +360,6 @@ if data.get("format_version") != 4:
 accounts = data.get("accounts")
 if not isinstance(accounts, list) or not accounts:
     raise ValueError("El backup no contiene cuentas.")
-
 if len(accounts) > 100000:
     raise ValueError("Número de cuentas fuera de rango.")
 
@@ -379,11 +382,19 @@ for a in accounts:
     if not isinstance(records, list) or not records:
         raise ValueError("Faltan registros Darnix para " + u)
 
+    matching_expiry = False
     for record in records:
+        if not isinstance(record, str):
+            raise ValueError("Registro Darnix inválido para " + u)
         parts = record.split()
         if len(parts) != 3 or parts[0] != "###" or parts[1] != u:
             raise ValueError("Registro Darnix incorrecto para " + u)
         check_date(parts[2])
+        if parts[2] == a["darnix_expiry"]:
+            matching_expiry = True
+
+    if not matching_expiry:
+        raise ValueError("Fecha Darnix incoherente para " + u)
 
     sh = a.get("shadow")
     if not isinstance(sh, dict):
@@ -418,11 +429,59 @@ print(len(accounts))
 PY
 }
 
-# ───────────────────── 🧰 BACKUP PREVIO ─────────────────────
+# ───────────────────── 🛡️ BACKUP PREVIO DE EMERGENCIA ─────────────────────
 
 create_pre_restore_backup() {
-    info "🛡️ Creando automáticamente un backup previo..."
-    create_backup
+    local stamp archive tmp_archive
+
+    stamp="$(date '+%Y%m%d-%H%M%S')"
+    archive="$BACKUP_DIR/darnix-pre-restore-${stamp}.tar.gz"
+
+    [[ ! -e "$archive" ]] || {
+        error "Ya existe una copia previa con ese nombre."
+        return 1
+    }
+
+    info "🛡️ Creando copia de emergencia del estado actual..."
+
+    tmp_archive="$(mktemp "$BACKUP_DIR/.pre-restore-XXXXXXXX")" || {
+        error "No se pudo crear el archivo temporal."
+        return 1
+    }
+    chmod 600 "$tmp_archive"
+
+    # Esta copia no depende de que .ssh.db tenga cuentas reconocibles.
+    # Incluye bases Darnix, configuración SSH y bases de cuentas Linux.
+    if ! tar -czpf "$tmp_archive" -C / \
+        etc/passwd \
+        etc/shadow \
+        etc/group \
+        etc/gshadow \
+        etc/ssh; then
+        rm -f -- "$tmp_archive"
+        error "No se pudo guardar el estado actual."
+        return 1
+    fi
+
+    if [[ ! -s "$tmp_archive" ]] ||
+       ! tar -tzf "$tmp_archive" >/dev/null 2>&1; then
+        rm -f -- "$tmp_archive"
+        error "La copia de emergencia no superó la verificación."
+        return 1
+    fi
+
+    if ! mv -- "$tmp_archive" "$archive"; then
+        rm -f -- "$tmp_archive"
+        error "No se pudo guardar la copia de emergencia."
+        return 1
+    fi
+
+    chmod 600 "$archive"
+
+    ok "Copia de emergencia creada y verificada."
+    info "📦 Archivo: $archive"
+    info "📏 Tamaño: $(du -h "$archive" | awk '{print $1}')"
+    info "🔐 Permisos privados aplicados."
 }
 
 # ───────────────────── ♻️ RESTAURAR TODO ─────────────────────
@@ -444,6 +503,7 @@ restore_archive() {
     fi
 
     ok "Backup válido: $count cuentas."
+
     create_pre_restore_backup || {
         rm -rf -- "$tmpdir"
         error "No se pudo crear el backup previo. Restauración cancelada."
@@ -461,6 +521,8 @@ import base64
 import tempfile
 import subprocess
 import datetime
+import pwd
+import re
 
 (json_path, ssh_dir, users_db, quotas_db, traffic_db,
  config_dir, banner_dir) = sys.argv[1:]
@@ -470,6 +532,15 @@ with open(json_path, encoding="utf-8") as f:
 
 accounts = data["accounts"]
 users_to_restore = {a["username"] for a in accounts}
+
+def valid_user(u):
+    return isinstance(u, str) and bool(
+        re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_.-]*[$]?", u)
+    )
+
+for u in users_to_restore:
+    if not valid_user(u):
+        raise ValueError("Nombre de usuario inválido: " + repr(u))
 
 def atomic_write(path, content, mode=None):
     parent = os.path.dirname(path)
@@ -526,7 +597,6 @@ def run(args):
 for a in accounts:
     u = a["username"]
     try:
-        import pwd
         pwd.getpwnam(u)
         exists = True
     except KeyError:
@@ -535,19 +605,18 @@ for a in accounts:
     if not exists:
         run(["useradd", "-M", "-s", "/bin/false", u])
 
-# Aplicar hashes y propiedades de cuentas.
+# Aplicar hashes y propiedades de las cuentas.
 for a in accounts:
     u = a["username"]
     sh = a["shadow"]
 
-    # Las cuentas Darnix deben mantener una shell no interactiva.
     original_shell = a.get("shell_original", "/bin/false")
     shell = original_shell if original_shell in (
         "/bin/false", "/usr/sbin/nologin"
     ) else "/bin/false"
 
     run(["usermod", "-s", shell, u])
-    run(["chpasswd", "-e"], input=None) if False else None
+
     subprocess.run(
         ["chpasswd", "-e"],
         input=f'{u}:{sh["password_hash"]}\n',
@@ -555,7 +624,6 @@ for a in accounts:
         check=True
     )
 
-    # Restaurar envejecimiento de contraseña y expiración Linux.
     aging = (
         ("min_days", "-m"),
         ("max_days", "-M"),
@@ -592,7 +660,7 @@ for a in accounts:
             ).isoformat()
             run(["chage", "-E", exp_date, u])
 
-# Fusionar .ssh.db: conservar las cuentas que no están en el backup.
+# Fusionar .ssh.db y conservar las entradas de otros usuarios.
 with open(users_db, encoding="utf-8") as f:
     old_lines = f.readlines()
 
@@ -608,7 +676,6 @@ for a in accounts:
 
 atomic_write(users_db, "".join(new_lines).encode())
 
-# Restaurar archivos individuales de cada cuenta.
 os.makedirs(config_dir, exist_ok=True)
 os.makedirs(banner_dir, exist_ok=True)
 
@@ -631,7 +698,7 @@ for a in accounts:
         else:
             atomic_write(path, content, mode)
 
-# Fusionar cuota y tráfico; no reemplazar datos de otros usuarios.
+# Fusionar cuotas y tráfico sin reemplazar registros ajenos.
 quotas = read_json(quotas_db)
 traffic = read_json(traffic_db)
 
@@ -652,7 +719,8 @@ PY
     then
         rm -rf -- "$tmpdir"
         error "La restauración encontró un error."
-        warn "Se creó un backup previo; revisa ese archivo antes de reintentar."
+        warn "La copia de emergencia se conserva en $BACKUP_DIR."
+        warn "Revisa ese archivo antes de intentar otra restauración."
         return 1
     fi
 
@@ -664,7 +732,7 @@ PY
     else
         error "sshd -t detectó errores."
         warn "No se recargó ni reinició SSH."
-        warn "Revisa los archivos restaurados y el backup previo."
+        warn "Revisa los archivos restaurados y la copia de emergencia."
         return 1
     fi
 
