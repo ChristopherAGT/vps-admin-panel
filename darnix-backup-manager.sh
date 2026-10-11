@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════╗
 # ║          💎 DARNIX BACKUP MANAGER PREMIUM 💎             ║
@@ -8,7 +7,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="4.3.0"
+VERSION="4.2.0"
 
 BACKUP_DIR="/root/darnix-json-backups"
 SSH_DIR="/etc/ssh"
@@ -1091,14 +1090,23 @@ delete_backup() {
 
     echo
     warn "Se eliminará: $file"
-    read -r -p "  Escribe ELIMINAR para confirmar: " answer
+    read -r -p "  ¿Deseas eliminar esta copia? [s/n]: " answer
 
-    if [[ "$answer" == "ELIMINAR" ]]; then
-        rm -f -- "$BACKUP_DIR/$file"
-        ok "Backup eliminado."
-    else
-        info "Operación cancelada."
-    fi
+    case "$answer" in
+        s|S)
+            if rm -f -- "$BACKUP_DIR/$file"; then
+                ok "Backup eliminado."
+            else
+                error "No se pudo eliminar el backup."
+            fi
+            ;;
+        n|N)
+            info "Operación cancelada."
+            ;;
+        *)
+            warn "Respuesta inválida. No se eliminó la copia."
+            ;;
+    esac
 
     pause
 }
@@ -1149,14 +1157,14 @@ main() {
         header
 
         echo "  ${GOLD}🌟 MENÚ PRINCIPAL${N}"
-        echo "  ${D}Administra cuentas SSH y HWID.${N}"
+        echo "  ${D}Administra cuentas SSH y HWID desde una sola copia.${N}"
         echo
         line
 
         echo "  ${G}[1]${N} 💾 Crear copia de seguridad completa"
-        echo "  ${B}[2]${N} ♻️ Restaurar todas las cuentas desde backup"
+        echo "  ${B}[2]${N} ♻️  Restaurar todas las cuentas desde backup"
         echo "  ${C}[3]${N} 📚 Ver copias de seguridad disponibles"
-        echo "  ${R}[4]${N} 🗑️ Eliminar una copia de seguridad"
+        echo "  ${R}[4]${N} 🗑️  Eliminar una copia de seguridad"
         echo "  ${Y}[5]${N} 🩺 Diagnóstico del sistema"
         echo "  ${R}[0]${N} 🚪 Salir"
 
@@ -1216,6 +1224,7 @@ main() {
                     continue
                 }
 
+                # Restauración directa: sin solicitar RESTAURAR ni confirmación.
                 restore_archive \
                     "$BACKUP_DIR/${files[$((choice-1))]}" || true
                 pause
