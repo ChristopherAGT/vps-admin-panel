@@ -8,7 +8,7 @@
 set -Eeuo pipefail
 umask 077
 
-VERSION="4.5.0"
+VERSION="4.6.0"
 BACKUP_DIR="/root/darnix-json-backups"
 SSH_DIR="/etc/ssh"
 USERS_DB="$SSH_DIR/.ssh.db"
@@ -866,7 +866,7 @@ main() {
     while true; do
         header
         echo "  ${GOLD}🌟 MENÚ PRINCIPAL${N}"
-        echo "  ${D}Administra cuentas SSH y HWID desde una sola copia.${N}"
+        echo "  ${D}Crea un respaldo de tus cuentas SSH y HWID.${N}"
         echo
         line
 
